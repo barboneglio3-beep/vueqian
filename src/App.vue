@@ -89,6 +89,13 @@ const normalizeLoginSession = (payload) => {
   }
 }
 
+const getPayloadMessage = (payload, fallback = '接口请求失败') => {
+  if (payload?.data && typeof payload.data === 'object' && payload.data.message) {
+    return payload.data.message
+  }
+  return payload?.message || fallback
+}
+
 const view = ref('login')
 const loading = ref(false)
 const errorMessage = ref('')
@@ -137,6 +144,8 @@ const countdownSeconds = ref(0)
 
 let countdownTimer = null
 let dashboardPollTimer = null
+let winResultsRequestId = 0
+let drawResultsRequestId = 0
 
 const getAuthToken = () => loginResult.value?.token || ''
 
@@ -307,7 +316,15 @@ const displayWinResult = computed(() => {
   return latestDrawResult.value
 })
 
+const isDrawDisplayLoading = computed(() => {
+  return drawResultsLoading.value || winResultsLoading.value
+})
+
 const latestDrawNumbers = computed(() => {
+  if (isDrawDisplayLoading.value) {
+    return ['加载中']
+  }
+
   const drawCode = displayWinResult.value?.drawCode
   if (!drawCode) {
     return []
@@ -329,12 +346,20 @@ const latestDrawNumbers = computed(() => {
 })
 
 const latestDrawSpecial = computed(() => {
+  if (isDrawDisplayLoading.value) {
+    return '加载中'
+  }
+
   const fanText = String(displayWinResult.value?.fanResult || '').trim()
   const matched = fanText.match(/([1-4])/)
   return matched ? matched[1] : '--'
 })
 
 const latestDrawIssueLabel = computed(() => {
+  if (isDrawDisplayLoading.value) {
+    return '加载中'
+  }
+
   return displayWinResult.value?.issueNo || '--'
 })
 
@@ -548,6 +573,7 @@ const betTotalAmount = computed(() => {
 
   return formatMoney(total)
 })
+const batchBetAmount = ref('')
 const betSubmitButtonText = computed(() => `${currentPlayModeLabel.value || '确认'}下注`)
 
 const getCornerTokens = (playName) => {
@@ -575,6 +601,20 @@ const formatBallIndexLabel = (ballIndex) => {
   }
   const numericValue = Number(ballIndex)
   return Number.isFinite(numericValue) && numericValue > 0 ? `${numericValue}球` : '--'
+}
+
+const formatResultStatusLabel = (resultStatus) => {
+  const normalizedStatus = String(resultStatus || '').trim().toUpperCase()
+  if (normalizedStatus === 'WIN') {
+    return '中奖'
+  }
+  if (normalizedStatus === 'DRAW') {
+    return '平'
+  }
+  if (normalizedStatus === 'LOSE') {
+    return '未中奖'
+  }
+  return resultStatus || '--'
 }
 
 const parseDrawCodeNumbers = (drawCode) => {
@@ -669,31 +709,27 @@ const getBetResultDisplay = (bet) => {
 }
 
 const trendRows = computed(() => {
-  const rowOrder = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]
-  const groupedByTail = rowOrder.reduce((accumulator, tail) => {
-    accumulator[tail] = []
-    return accumulator
-  }, {})
+  const rowCount = 10
+  const columnCount = 12
+  const maxCellCount = rowCount * columnCount
+  const matrix = Array.from({ length: rowCount }, () => Array.from({ length: columnCount }, () => ''))
 
-  const orderedResults = [...winResults.value].sort((left, right) => compareIssueNo(left?.issueNo, right?.issueNo))
+  const orderedFanValues = [...winResults.value]
+    .sort((left, right) => compareIssueNo(left?.issueNo, right?.issueNo))
+    .map((item) => String(item?.fanResult || '').match(/([1-4])/))
+    .map((match) => (match ? Number(match[1]) : null))
+    .filter((value) => value !== null)
+    .slice(-maxCellCount)
 
-  orderedResults.forEach((item) => {
-    const issueText = String(item?.issueNo || '').trim()
-    const issueTailText = issueText.slice(-1)
-    const issueTail = Number(issueTailText)
-    const fanMatch = String(item?.fanResult || '').match(/([1-4])/)
-    const fanValue = fanMatch ? Number(fanMatch[1]) : null
-
-    if (!Number.isNaN(issueTail) && fanValue !== null && groupedByTail[issueTail]) {
-      groupedByTail[issueTail].push(fanValue)
+  orderedFanValues.forEach((value, index) => {
+    const rowIndex = index % rowCount
+    const colIndex = Math.floor(index / rowCount)
+    if (colIndex < columnCount) {
+      matrix[rowIndex][colIndex] = value
     }
   })
 
-  const columnCount = Math.max(12, ...rowOrder.map((tail) => groupedByTail[tail].length))
-  return rowOrder.map((tail) => {
-    const rowValues = groupedByTail[tail]
-    return Array.from({ length: columnCount }, (_, index) => rowValues[index] ?? '')
-  })
+  return matrix
 })
 
 const gameBallConfig = {
@@ -771,8 +807,12 @@ const apiFetch = async (url, options = {}) => {
   })
 
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok || payload.success === false) {
-    throw new Error(payload.message || '接口请求失败')
+  if (
+    !response.ok ||
+    payload.success === false ||
+    (payload?.data && typeof payload.data === 'object' && payload.data.success === false)
+  ) {
+    throw new Error(getPayloadMessage(payload))
   }
 
   return payload
@@ -950,10 +990,12 @@ const loadWinResults = async (gameId, silent = false) => {
     return
   }
 
+  const requestId = ++winResultsRequestId
+
   const query = new URLSearchParams({
     gameId: String(gameId),
     page: '0',
-    size: '50',
+    size: '120',
   })
 
   if (!silent) {
@@ -967,15 +1009,23 @@ const loadWinResults = async (gameId, silent = false) => {
     const resultList =
       pageData.records || pageData.content || pageData.list || pageData.items || []
 
+    if (requestId !== winResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
+
     winResults.value = Array.isArray(resultList) ? resultList : []
   } catch (error) {
+    if (requestId !== winResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
+
     if (!silent) {
       winResults.value = []
       winResultsError.value =
         error instanceof Error ? error.message : '中奖结果加载失败'
     }
   } finally {
-    if (!silent) {
+    if (!silent && requestId === winResultsRequestId && Number(selectedGameId.value) === Number(gameId)) {
       winResultsLoading.value = false
     }
   }
@@ -988,6 +1038,8 @@ const loadDrawResults = async (gameId, silent = false) => {
     return
   }
 
+  const requestId = ++drawResultsRequestId
+
   if (!silent) {
     drawResultsLoading.value = true
     drawResultsError.value = ''
@@ -998,6 +1050,10 @@ const loadDrawResults = async (gameId, silent = false) => {
     const pageData = payload.data || payload
     const resultList =
       pageData.records || pageData.content || pageData.list || pageData.items || []
+
+    if (requestId !== drawResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
 
     drawResults.value = Array.isArray(resultList)
       ? [...resultList].sort((a, b) => {
@@ -1017,13 +1073,17 @@ const loadDrawResults = async (gameId, silent = false) => {
         })
       : []
   } catch (error) {
+    if (requestId !== drawResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
+
     if (!silent) {
       drawResults.value = []
       drawResultsError.value =
         error instanceof Error ? error.message : '开奖历史加载失败'
     }
   } finally {
-    if (!silent) {
+    if (!silent && requestId === drawResultsRequestId && Number(selectedGameId.value) === Number(gameId)) {
       drawResultsLoading.value = false
     }
   }
@@ -1034,6 +1094,19 @@ const stopAutoRefresh = () => {
   dashboardPollTimer = null
 }
 
+const refreshActiveView = async () => {
+  if (!selectedGameId.value) {
+    return
+  }
+
+  if (activeQuickAction.value === '下注明细') {
+    await loadBets(selectedGameId.value, betsPage.value.page, true)
+    return
+  }
+
+  await loadDashboard(true)
+}
+
 const startAutoRefresh = () => {
   stopAutoRefresh()
 
@@ -1042,7 +1115,7 @@ const startAutoRefresh = () => {
       return
     }
 
-    await loadDashboard(true)
+    await refreshActiveView()
   }, 5000)
 }
 
@@ -1115,24 +1188,34 @@ const selectQuickAction = async (action) => {
   activeQuickAction.value = action
   if (action === '下注明细') {
     await loadBets(selectedGameId.value, 0, false)
+    return
+  }
+
+  if (action === '游戏投注' && selectedGameId.value) {
+    await Promise.all([
+      loadDrawResults(selectedGameId.value, false),
+      loadWinResults(selectedGameId.value, false),
+      loadBets(selectedGameId.value, 0, false),
+    ])
   }
 }
 
 const selectBetPlay = (playName) => {
-  selectedBetPlay.value = playName
   betSubmitError.value = ''
   betSubmitMessage.value = ''
 
   const existingItem = betSlipItems.value.find((item) => item.playName === playName)
   if (existingItem) {
+    removeBetSlipItem(playName)
     return
   }
 
+  selectedBetPlay.value = playName
   const playSetting = findPlaySettingByPlayName(playName)
   betSlipItems.value.push({
     playName,
     odds: getPlayOdds(playName),
-    betAmount: '',
+    betAmount: batchBetAmount.value,
     gamePlayId: playSetting?.gamePlayId || playSetting?.id || null,
     memberId: playSetting?.memberId || playSettings.value[0]?.memberId || null,
   })
@@ -1149,6 +1232,19 @@ const selectGame = async (gameId) => {
   startCountdown(selectedGame.value?.sealCountdownSeconds)
   selectedBetPlay.value = ''
   betSlipItems.value = []
+  batchBetAmount.value = ''
+  drawResults.value = []
+  drawResultsError.value = ''
+  drawResultsLoading.value = false
+  winResults.value = []
+  winResultsError.value = ''
+  winResultsLoading.value = false
+
+  if (activeQuickAction.value === '下注明细') {
+    await loadBets(gameId, 0, false)
+    return
+  }
+
   await Promise.all([
     loadDrawResults(gameId, false),
     loadWinResults(gameId, false),
@@ -1183,6 +1279,18 @@ const selectBall = (ball) => {
   betSubmitMessage.value = ''
 }
 
+const syncBatchBetAmount = () => {
+  if (!betSlipItems.value.length) {
+    batchBetAmount.value = ''
+    return
+  }
+
+  const [firstItem] = betSlipItems.value
+  const firstAmount = String(firstItem?.betAmount ?? '')
+  const isSameAmount = betSlipItems.value.every((item) => String(item?.betAmount ?? '') === firstAmount)
+  batchBetAmount.value = isSameAmount ? firstAmount : ''
+}
+
 const updateBetSlipAmount = (playName, value) => {
   const targetItem = betSlipItems.value.find((item) => item.playName === playName)
   if (!targetItem) {
@@ -1190,13 +1298,24 @@ const updateBetSlipAmount = (playName, value) => {
   }
 
   targetItem.betAmount = value
+  syncBatchBetAmount()
   selectedBetPlay.value = playName
+  betSubmitError.value = ''
+  betSubmitMessage.value = ''
+}
+
+const updateBatchBetAmount = (value) => {
+  batchBetAmount.value = value
+  betSlipItems.value.forEach((item) => {
+    item.betAmount = value
+  })
   betSubmitError.value = ''
   betSubmitMessage.value = ''
 }
 
 const removeBetSlipItem = (playName) => {
   betSlipItems.value = betSlipItems.value.filter((item) => item.playName !== playName)
+  syncBatchBetAmount()
   if (selectedBetPlay.value === playName) {
     selectedBetPlay.value = betSlipItems.value[betSlipItems.value.length - 1]?.playName || ''
   }
@@ -1207,6 +1326,7 @@ const removeBetSlipItem = (playName) => {
 const clearBetSlip = () => {
   selectedBetPlay.value = ''
   betSlipItems.value = []
+  batchBetAmount.value = ''
   betSubmitError.value = ''
   betSubmitMessage.value = ''
 }
@@ -1268,6 +1388,7 @@ const submitBet = async () => {
     betSubmitMessage.value = '下注成功'
     betSlipItems.value = []
     selectedBetPlay.value = ''
+    batchBetAmount.value = ''
     await Promise.all([
       loadBets(selectedGameId.value, 0, false),
       apiFetch('/api/member/current').then((result) => {
@@ -1483,7 +1604,17 @@ onBeforeUnmount(() => {
             </template>
 
             <div class="bet-slip-cell bet-slip-label">金额：</div>
-            <div class="bet-slip-cell bet-slip-span-3 bet-slip-total-amount">{{ betTotalAmount }}</div>
+            <div class="bet-slip-cell bet-slip-span-3">
+              <input
+                class="bet-slip-input bet-slip-input-wide"
+                :value="batchBetAmount"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="请输入统一金额"
+                @input="updateBatchBetAmount($event.target.value)"
+              />
+            </div>
 
             <div class="bet-slip-cell bet-slip-summary">笔数：{{ betCount }}</div>
             <div class="bet-slip-cell bet-slip-summary bet-slip-span-3">总额：{{ betTotalAmount }}</div>
@@ -1568,65 +1699,70 @@ onBeforeUnmount(() => {
           <p v-if="betsError" class="console-message is-error">{{ betsError }}</p>
           <p v-else-if="betsLoading" class="console-message">下注明细加载中...</p>
 
-          <div v-else class="bets-table">
-            <div class="bets-head">订单号</div>
-            <div class="bets-head">下注时间</div>
-            <div class="bets-head">下注类型</div>
-            <div class="bets-head">球位</div>
-            <div class="bets-head">玩法</div>
-            <div class="bets-head">赔率</div>
-            <div class="bets-head">开奖结果说明</div>
-            <div class="bets-head">金额</div>
-            <div class="bets-head">有效金额</div>
-            <div class="bets-head">派彩</div>
-            <div class="bets-head">退水</div>
-            <div class="bets-head">结果金额</div>
-            <div class="bets-head">状态</div>
+          <div v-else class="bets-table-wrap">
+            <div class="bets-table">
+              <div class="bets-head">订单号</div>
+              <div class="bets-head">下注时间</div>
+              <div class="bets-head">下注类型</div>
+              <div class="bets-head">球位</div>
+              <div class="bets-head">玩法</div>
+              <div class="bets-head">下注明细</div>
+              <div class="bets-head">赔率</div>
+              <div class="bets-head">开奖结果说明</div>
+              <div class="bets-head">金额</div>
+              <div class="bets-head">有效金额</div>
+              <div class="bets-head">派彩</div>
+              <div class="bets-head">退水</div>
+              <div class="bets-head">结果金额</div>
+              <div class="bets-head">判定状态</div>
+              <div class="bets-head">状态</div>
 
-            <template v-if="displayedBets.length">
-              <template v-for="bet in displayedBets" :key="bet.orderNo">
-                <div class="bets-cell">{{ bet.orderNo || '--' }}</div>
-                <div class="bets-cell">{{ formatDateTime(bet.createdAt) }}</div>
-                <div class="bets-cell bill-type-cell">
-                  <span class="bill-type-name">{{ bet.betType || '--' }}</span>
-                  <span class="bill-type-issue">{{ bet.issueNo || '--' }}</span>
-                </div>
-                <div class="bets-cell">{{ formatBallIndexLabel(bet.ballIndex) }}</div>
-                <div class="bets-cell">{{ bet.playName || '--' }}</div>
-                <div class="bets-cell">{{ getBetOddsDisplay(bet) }}</div>
-                <div class="bets-cell bets-result-cell">
-                  <template v-if="getBetResultDisplay(bet)">
-                    <div class="bets-result-card">
-                      <div class="bets-result-title">{{ getBetResultDisplay(bet).title }}</div>
-                      <div class="bets-result-row">
-                        <span class="bets-result-label">结果：</span>
-                        <span
-                          v-for="(num, index) in getBetResultDisplay(bet).numbers"
-                          :key="`${bet.orderNo || 'bet'}-${index}-${num}`"
-                          class="bets-result-number"
-                          :class="{ active: index === getBetResultDisplay(bet).highlightIndex }"
-                        >
-                          {{ num }}
-                        </span>
-                        <span v-if="getBetResultDisplay(bet).tail" class="bets-result-tail">
-                          {{ getBetResultDisplay(bet).tail }}
-                        </span>
+              <template v-if="displayedBets.length">
+                <template v-for="bet in displayedBets" :key="bet.orderNo">
+                  <div class="bets-cell">{{ bet.orderNo || '--' }}</div>
+                  <div class="bets-cell">{{ formatDateTime(bet.createdAt) }}</div>
+                  <div class="bets-cell bill-type-cell">
+                    <span class="bill-type-name">{{ bet.betType || '--' }}</span>
+                    <span class="bill-type-issue">{{ bet.issueNo || '--' }}</span>
+                  </div>
+                  <div class="bets-cell">{{ formatBallIndexLabel(bet.ballIndex) }}</div>
+                  <div class="bets-cell">{{ bet.playName || '--' }}</div>
+                  <div class="bets-cell">{{ getBetDetailWithoutIssue(bet) }}</div>
+                  <div class="bets-cell">{{ getBetOddsDisplay(bet) }}</div>
+                  <div class="bets-cell bets-result-cell">
+                    <template v-if="getBetResultDisplay(bet)">
+                      <div class="bets-result-card">
+                        <div class="bets-result-row">
+                          <span class="bets-result-label">结果：</span>
+                          <span
+                            v-for="(num, index) in getBetResultDisplay(bet).numbers"
+                            :key="`${bet.orderNo || 'bet'}-${index}-${num}`"
+                            class="bets-result-number"
+                            :class="{ active: index === getBetResultDisplay(bet).highlightIndex }"
+                          >
+                            {{ num }}
+                          </span>
+                          <span v-if="getBetResultDisplay(bet).tail" class="bets-result-tail">
+                            {{ getBetResultDisplay(bet).tail }}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  </template>
-                  <template v-else>{{ bet.resultDetail || '--' }}</template>
-                </div>
-                <div class="bets-cell">{{ bet.betAmount ?? '--' }}</div>
-                <div class="bets-cell">{{ bet.validAmount ?? '--' }}</div>
-                <div class="bets-cell">{{ bet.payoutAmount ?? '--' }}</div>
-                <div class="bets-cell">{{ bet.rebateAmount ?? '--' }}</div>
-                <div class="bets-cell">{{ bet.resultAmount ?? '--' }}</div>
-                <div class="bets-cell">{{ bet.status || '--' }}</div>
+                    </template>
+                    <template v-else>{{ bet.resultDetail || '--' }}</template>
+                  </div>
+                  <div class="bets-cell">{{ bet.betAmount ?? '--' }}</div>
+                  <div class="bets-cell">{{ bet.validAmount ?? '--' }}</div>
+                  <div class="bets-cell">{{ bet.payoutAmount ?? '--' }}</div>
+                  <div class="bets-cell">{{ bet.rebateAmount ?? '--' }}</div>
+                  <div class="bets-cell">{{ bet.resultAmount ?? '--' }}</div>
+                  <div class="bets-cell">{{ formatResultStatusLabel(bet.resultStatus) }}</div>
+                  <div class="bets-cell">{{ bet.status || '--' }}</div>
+                </template>
               </template>
-            </template>
-            <template v-else>
-              <div class="bets-empty">暂无下注明细</div>
-            </template>
+              <template v-else>
+                <div class="bets-empty">暂无下注明细</div>
+              </template>
+            </div>
           </div>
 
           <div v-if="!betsLoading && !betsError" class="bets-view-pagination bets-view-pagination-footer">

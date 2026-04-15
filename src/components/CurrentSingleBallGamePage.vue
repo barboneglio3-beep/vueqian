@@ -93,7 +93,11 @@ const isPlaySelected = (playName) => {
       <span>开奖结果:</span>
     </div>
 
-    <div class="draw-balls">
+    <div v-if="latestDrawNumbers.length === 1 && latestDrawNumbers[0] === '加载中'" class="draw-loading">
+      开奖数据加载中...
+    </div>
+
+    <div v-else class="draw-balls">
       <span
         v-for="(num, index) in latestDrawNumbers"
         :key="`${latestDrawResultId}-${index}-${num}`"
