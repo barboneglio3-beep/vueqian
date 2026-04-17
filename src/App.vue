@@ -31,7 +31,7 @@ const agreementItems = [
 const noticeText =
   '公告：会员控制台已接入当前用户信息与游戏分页列表接口，赔率格与走势表暂以展示布局为主。'
 
-const quickActions = ['游戏投注', '下注明细']
+const quickActions = ['游戏投注', '下注明细', '账户历史']
 const topTriplePlays = ['1念2', '1念3', '1念4']
 const leftTriplePlays = ['2念1', '2念4', '2念3']
 const rightTriplePlays = ['4念1', '4念2', '4念3']
@@ -126,12 +126,36 @@ const activeQuickAction = ref('游戏投注')
 const bets = ref([])
 const betsLoading = ref(false)
 const betsError = ref('')
+const betsFilters = reactive({
+  gameId: null,
+  startAt: '',
+  endAt: '',
+})
 const betsPage = ref({
   total: 0,
   page: 0,
   size: 6,
   totalPages: 0,
 })
+const dailySummary = ref([])
+const dailySummaryLoading = ref(false)
+const dailySummaryError = ref('')
+const dailySummarySelectedDate = ref('')
+const dailySummaryGames = ref([])
+const dailySummaryGamesLoading = ref(false)
+const dailySummaryGamesError = ref('')
+const dailySummaryPage = ref({
+  total: 0,
+  page: 0,
+  size: 10,
+  totalPages: 0,
+})
+const dailySummaryFilters = reactive({
+  startDate: '',
+  endDate: '',
+})
+const hoveredDailySummaryDate = ref('')
+const hoveredDailySummaryGameKey = ref('')
 const gamePage = ref({
   total: 0,
   page: 0,
@@ -183,6 +207,18 @@ const formatDateTime = (value) => {
   return text.replace('T', ' ').replace(/\.\d+$/, '')
 }
 
+const formatDateInputValue = (value) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const displayName = computed(() => {
   const name =
     currentUser.value?.username ||
@@ -214,6 +250,50 @@ const currentPlayModeLabel = computed(() => {
 })
 
 const displayedBets = computed(() => bets.value)
+const displayedDailySummary = computed(() => dailySummary.value)
+const displayedDailySummaryGames = computed(() => dailySummaryGames.value)
+const dailySummaryTotals = computed(() => {
+  return displayedDailySummary.value.reduce(
+    (accumulator, item) => {
+      accumulator.orderCount += Number(item?.orderCount) || 0
+      accumulator.betAmount += Number(item?.betAmount) || 0
+      accumulator.validAmount += Number(item?.validAmount) || 0
+      accumulator.payoutAmount += Number(item?.payoutAmount) || 0
+      accumulator.rebateAmount += Number(item?.rebateAmount) || 0
+      accumulator.resultAmount += Number(item?.resultAmount) || 0
+      return accumulator
+    },
+    {
+      orderCount: 0,
+      betAmount: 0,
+      validAmount: 0,
+      payoutAmount: 0,
+      rebateAmount: 0,
+      resultAmount: 0,
+    },
+  )
+})
+const dailySummaryGamesTotals = computed(() => {
+  return displayedDailySummaryGames.value.reduce(
+    (accumulator, item) => {
+      accumulator.orderCount += Number(item?.orderCount) || 0
+      accumulator.betAmount += Number(item?.betAmount) || 0
+      accumulator.validAmount += Number(item?.validAmount) || 0
+      accumulator.payoutAmount += Number(item?.payoutAmount) || 0
+      accumulator.rebateAmount += Number(item?.rebateAmount) || 0
+      accumulator.resultAmount += Number(item?.resultAmount) || 0
+      return accumulator
+    },
+    {
+      orderCount: 0,
+      betAmount: 0,
+      validAmount: 0,
+      payoutAmount: 0,
+      rebateAmount: 0,
+      resultAmount: 0,
+    },
+  )
+})
 
 const activeBetSlipItem = computed(() => {
   return betSlipItems.value.find((item) => item.playName === selectedBetPlay.value) || null
@@ -949,7 +1029,18 @@ const loadBets = async (gameId, page = 0, silent = false) => {
     size: String(betsPage.value.size),
   })
 
-  if (gameId) {
+  const targetGameId = gameId ?? betsFilters.gameId
+  if (targetGameId) {
+    query.set('gameId', String(targetGameId))
+  }
+  if (betsFilters.startAt) {
+    query.set('startAt', betsFilters.startAt)
+  }
+  if (betsFilters.endAt) {
+    query.set('endAt', betsFilters.endAt)
+  }
+
+  if (gameId && !betsFilters.startAt && !betsFilters.endAt) {
     query.set('gameId', String(gameId))
   }
 
@@ -979,6 +1070,82 @@ const loadBets = async (gameId, page = 0, silent = false) => {
   } finally {
     if (!silent) {
       betsLoading.value = false
+    }
+  }
+}
+
+const loadDailySummary = async (gameId, page = 0, silent = false) => {
+  const query = new URLSearchParams({
+    page: String(page),
+    size: String(dailySummaryPage.value.size),
+  })
+
+  if (gameId) {
+    query.set('gameId', String(gameId))
+  }
+  if (dailySummaryFilters.startDate) {
+    query.set('startDate', dailySummaryFilters.startDate)
+  }
+  if (dailySummaryFilters.endDate) {
+    query.set('endDate', dailySummaryFilters.endDate)
+  }
+
+  if (!silent) {
+    dailySummaryLoading.value = true
+    dailySummaryError.value = ''
+  }
+
+  try {
+    const payload = await apiFetch(`/api/bets/daily-summary?${query.toString()}`)
+    const pageData = payload.data || payload
+    const summaryList = pageData.records || pageData.content || pageData.list || pageData.items || []
+
+    dailySummary.value = Array.isArray(summaryList) ? summaryList : []
+    dailySummaryPage.value = {
+      total: pageData.total || 0,
+      page: pageData.page || 0,
+      size: pageData.size || dailySummaryPage.value.size,
+      totalPages: pageData.totalPages || 0,
+    }
+  } catch (error) {
+    if (!silent) {
+      dailySummary.value = []
+      dailySummaryError.value = error instanceof Error ? error.message : '账户历史加载失败'
+    }
+  } finally {
+    if (!silent) {
+      dailySummaryLoading.value = false
+    }
+  }
+}
+
+const loadDailySummaryGames = async (tradeDate, silent = false) => {
+  if (!tradeDate) {
+    dailySummaryGames.value = []
+    dailySummaryGamesError.value = ''
+    return
+  }
+
+  if (!silent) {
+    dailySummaryGamesLoading.value = true
+    dailySummaryGamesError.value = ''
+  }
+
+  try {
+    const query = new URLSearchParams({
+      tradeDate: String(tradeDate),
+    })
+    const payload = await apiFetch(`/api/bets/daily-summary/games?${query.toString()}`)
+    const list = payload.data || payload.list || []
+    dailySummaryGames.value = Array.isArray(list) ? list : []
+  } catch (error) {
+    if (!silent) {
+      dailySummaryGames.value = []
+      dailySummaryGamesError.value = error instanceof Error ? error.message : '账户历史明细加载失败'
+    }
+  } finally {
+    if (!silent) {
+      dailySummaryGamesLoading.value = false
     }
   }
 }
@@ -1104,6 +1271,15 @@ const refreshActiveView = async () => {
     return
   }
 
+  if (activeQuickAction.value === '账户历史') {
+    if (dailySummarySelectedDate.value) {
+      await loadDailySummaryGames(dailySummarySelectedDate.value, true)
+      return
+    }
+    await loadDailySummary(null, dailySummaryPage.value.page, true)
+    return
+  }
+
   await loadDashboard(true)
 }
 
@@ -1187,7 +1363,15 @@ const changePlayMode = (mode) => {
 const selectQuickAction = async (action) => {
   activeQuickAction.value = action
   if (action === '下注明细') {
+    resetBetsFilters()
     await loadBets(selectedGameId.value, 0, false)
+    return
+  }
+
+  if (action === '账户历史') {
+    ensureDailySummaryDefaultFilters()
+    closeDailySummaryDate()
+    await loadDailySummary(null, 0, false)
     return
   }
 
@@ -1245,6 +1429,15 @@ const selectGame = async (gameId) => {
     return
   }
 
+  if (activeQuickAction.value === '账户历史') {
+    if (dailySummarySelectedDate.value) {
+      await loadDailySummaryGames(dailySummarySelectedDate.value, false)
+      return
+    }
+    await loadDailySummary(null, 0, false)
+    return
+  }
+
   await Promise.all([
     loadDrawResults(gameId, false),
     loadWinResults(gameId, false),
@@ -1262,6 +1455,88 @@ const changeBetsPage = async (nextPage) => {
   }
 
   await loadBets(selectedGameId.value, nextPage, false)
+}
+
+const changeDailySummaryPage = async (nextPage) => {
+  if (nextPage < 0) {
+    return
+  }
+  if (dailySummaryPage.value.totalPages > 0 && nextPage >= dailySummaryPage.value.totalPages) {
+    return
+  }
+
+  await loadDailySummary(null, nextPage, false)
+}
+
+const resetBetsFilters = () => {
+  betsFilters.gameId = null
+  betsFilters.startAt = ''
+  betsFilters.endAt = ''
+}
+
+const openBetsFromDailySummaryGame = async (item) => {
+  const targetGameId = Number(item?.gameId || 0) || null
+  if (!targetGameId || !dailySummarySelectedDate.value) {
+    return
+  }
+
+  selectedGameId.value = targetGameId
+  betsFilters.gameId = targetGameId
+  betsFilters.startAt = `${dailySummarySelectedDate.value}T00:00:00`
+  betsFilters.endAt = `${dailySummarySelectedDate.value}T23:59:59`
+  activeQuickAction.value = '下注明细'
+  await loadBets(null, 0, false)
+}
+
+const openDailySummaryDate = async (tradeDate) => {
+  dailySummarySelectedDate.value = String(tradeDate || '').trim()
+  await loadDailySummaryGames(dailySummarySelectedDate.value, false)
+}
+
+const closeDailySummaryDate = () => {
+  dailySummarySelectedDate.value = ''
+  dailySummaryGames.value = []
+  dailySummaryGamesError.value = ''
+}
+
+const applyDailySummaryFilters = async () => {
+  closeDailySummaryDate()
+  await loadDailySummary(null, 0, false)
+}
+
+const resetDailySummaryFilters = async () => {
+  closeDailySummaryDate()
+  dailySummaryFilters.startDate = ''
+  dailySummaryFilters.endDate = ''
+  await loadDailySummary(null, 0, false)
+}
+
+const setDailySummaryThisWeek = async () => {
+  const now = new Date()
+  const currentDay = now.getDay()
+  const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay
+  const monday = new Date(now)
+  monday.setDate(now.getDate() + mondayOffset)
+
+  dailySummaryFilters.startDate = formatDateInputValue(monday)
+  dailySummaryFilters.endDate = formatDateInputValue(now)
+  closeDailySummaryDate()
+  await loadDailySummary(null, 0, false)
+}
+
+const ensureDailySummaryDefaultFilters = () => {
+  if (dailySummaryFilters.startDate && dailySummaryFilters.endDate) {
+    return
+  }
+
+  const now = new Date()
+  const currentDay = now.getDay()
+  const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay
+  const monday = new Date(now)
+  monday.setDate(now.getDate() + mondayOffset)
+
+  dailySummaryFilters.startDate = formatDateInputValue(monday)
+  dailySummaryFilters.endDate = formatDateInputValue(now)
 }
 
 const refreshDashboard = async () => {
@@ -1646,18 +1921,18 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <div class="bill-table">
-              <div class="bill-head">下注类型</div>
-              <div class="bill-head">球位</div>
-              <div class="bill-head">玩法</div>
+              <div class="bill-head">游戏</div>
+              <div class="bill-head">下注明细</div>
+              <div class="bill-head">赔率</div>
               <div class="bill-head">金额</div>
               <template v-if="displayedBets.length">
                 <template v-for="bet in displayedBets" :key="bet.orderNo">
                   <div class="bill-cell bill-type-cell">
-                    <span class="bill-type-name">{{ bet.betType || '--' }}</span>
+                    <span class="bill-type-name">{{ bet.gameName || selectedGame?.gameName || '--' }}</span>
                     <span class="bill-type-issue">{{ bet.issueNo || '--' }}</span>
                   </div>
-                  <div class="bill-cell">{{ formatBallIndexLabel(bet.ballIndex) }}</div>
-                  <div class="bill-cell">{{ bet.playName || bet.selectionValue || '--' }}</div>
+                  <div class="bill-cell">{{ getBetDetailWithoutIssue(bet) }}</div>
+                  <div class="bill-cell">{{ getBetOddsDisplay(bet) }}</div>
                   <div class="bill-cell">{{ bet.betAmount ?? '--' }}</div>
                 </template>
               </template>
@@ -1778,6 +2053,263 @@ onBeforeUnmount(() => {
               type="button"
               :disabled="betsPage.totalPages > 0 && betsPage.page >= betsPage.totalPages - 1"
               @click="changeBetsPage(betsPage.page + 1)"
+            >
+              下一页
+            </button>
+          </div>
+        </section>
+
+        <section v-else-if="activeQuickAction === '账户历史'" class="bets-view">
+          <div class="bets-view-header">
+            <h2>账户历史</h2>
+          </div>
+
+          <div v-if="!dailySummarySelectedDate" class="history-filters">
+            <label class="history-filter-field">
+              <span>起：</span>
+              <input v-model="dailySummaryFilters.startDate" type="date" @change="applyDailySummaryFilters" />
+            </label>
+            <label class="history-filter-field">
+              <span>止：</span>
+              <input v-model="dailySummaryFilters.endDate" type="date" @change="applyDailySummaryFilters" />
+            </label>
+            <button type="button" class="history-filter-button" @click="resetDailySummaryFilters">重置</button>
+            <button type="button" class="history-filter-button" @click="setDailySummaryThisWeek">本周</button>
+          </div>
+
+          <div v-else class="history-detail-toolbar">
+            <button type="button" class="history-back-button" @click="closeDailySummaryDate">返回</button>
+            <span class="history-detail-title">{{ dailySummarySelectedDate }}</span>
+          </div>
+
+          <p v-if="dailySummarySelectedDate && dailySummaryGamesError" class="console-message is-error">
+            {{ dailySummaryGamesError }}
+          </p>
+          <p v-else-if="dailySummarySelectedDate && dailySummaryGamesLoading" class="console-message">
+            账户历史明细加载中...
+          </p>
+          <p v-else-if="dailySummaryError" class="console-message is-error">{{ dailySummaryError }}</p>
+          <p v-else-if="dailySummaryLoading" class="console-message">账户历史加载中...</p>
+
+          <div v-else class="bets-table-wrap">
+            <template v-if="dailySummarySelectedDate">
+              <div class="history-table history-table-detail">
+                <div class="bets-head">交易日期</div>
+                <div class="bets-head">彩券种类</div>
+                <div class="bets-head">注单数</div>
+                <div class="bets-head">下注金额</div>
+                <div class="bets-head">有效金额</div>
+                <div class="bets-head">派彩</div>
+                <div class="bets-head">退水</div>
+                <div class="bets-head">结果</div>
+
+                <template v-if="displayedDailySummaryGames.length">
+                  <template v-for="item in displayedDailySummaryGames" :key="`${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}-detail`">
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ item.tradeDate || dailySummarySelectedDate }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ item.betType || '--' }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ item.orderCount ?? '--' }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ formatMoney(item.betAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ formatMoney(item.validAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ formatMoney(item.payoutAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ formatMoney(item.rebateAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryGameKey === `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}` }"
+                      @mouseenter="hoveredDailySummaryGameKey = `${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                      @mouseleave="hoveredDailySummaryGameKey = ''"
+                      @click="openBetsFromDailySummaryGame(item)"
+                    >
+                      {{ formatMoney(item.resultAmount) }}
+                    </div>
+                  </template>
+                  <div class="bets-cell history-total-cell">共计：</div>
+                  <div class="bets-cell history-total-cell">--</div>
+                  <div class="bets-cell history-total-cell">{{ dailySummaryGamesTotals.orderCount }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryGamesTotals.betAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryGamesTotals.validAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryGamesTotals.payoutAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryGamesTotals.rebateAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryGamesTotals.resultAmount) }}</div>
+                </template>
+                <template v-else>
+                  <div class="bets-empty">暂无账户历史明细</div>
+                </template>
+              </div>
+            </template>
+            <template v-else>
+              <div class="history-table">
+                <div class="bets-head">交易日期</div>
+                <div class="bets-head">游戏</div>
+                <div class="bets-head">注单数</div>
+                <div class="bets-head">下注金额</div>
+                <div class="bets-head">有效金额</div>
+                <div class="bets-head">派彩</div>
+                <div class="bets-head">退水</div>
+                <div class="bets-head">结果金额</div>
+
+                <template v-if="displayedDailySummary.length">
+                  <template v-for="item in displayedDailySummary" :key="`${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`">
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      <span class="history-date-link">{{ item.tradeDate || '--' }}</span>
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      {{ item.betType || '全部游戏' }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      {{ item.orderCount ?? '--' }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      {{ formatMoney(item.betAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      {{ formatMoney(item.validAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      {{ formatMoney(item.payoutAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      {{ formatMoney(item.rebateAmount) }}
+                    </div>
+                    <div
+                      class="bets-cell history-row-link-cell"
+                      :class="{ 'history-row-hovered': hoveredDailySummaryDate === item.tradeDate }"
+                      @mouseenter="hoveredDailySummaryDate = item.tradeDate"
+                      @mouseleave="hoveredDailySummaryDate = ''"
+                      @click="openDailySummaryDate(item.tradeDate)"
+                    >
+                      {{ formatMoney(item.resultAmount) }}
+                    </div>
+                  </template>
+                  <div class="bets-cell history-total-cell">总计</div>
+                  <div class="bets-cell history-total-cell">--</div>
+                  <div class="bets-cell history-total-cell">{{ dailySummaryTotals.orderCount }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryTotals.betAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryTotals.validAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryTotals.payoutAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryTotals.rebateAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryTotals.resultAmount) }}</div>
+                </template>
+                <template v-else>
+                  <div class="bets-empty">暂无账户历史</div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <div
+            v-if="!dailySummarySelectedDate && !dailySummaryLoading && !dailySummaryError"
+            class="bets-view-pagination bets-view-pagination-footer"
+          >
+            <button
+              type="button"
+              :disabled="dailySummaryPage.page <= 0"
+              @click="changeDailySummaryPage(dailySummaryPage.page - 1)"
+            >
+              上一页
+            </button>
+            <span>{{ (dailySummaryPage.page || 0) + 1 }} / {{ dailySummaryPage.totalPages || 1 }}</span>
+            <button
+              type="button"
+              :disabled="dailySummaryPage.totalPages > 0 && dailySummaryPage.page >= dailySummaryPage.totalPages - 1"
+              @click="changeDailySummaryPage(dailySummaryPage.page + 1)"
             >
               下一页
             </button>
