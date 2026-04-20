@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import Game1Page from './components/Game1Page.vue'
 import Game2Page from './components/Game2Page.vue'
 import Game3Page from './components/Game3Page.vue'
@@ -10,6 +10,7 @@ import Game7Page from './components/Game7Page.vue'
 
 const STORAGE_KEY = 'member-login-session'
 const AGREEMENT_KEY = 'member-agreement-accepted'
+const DASHBOARD_CACHE_KEY = 'member-dashboard-cache'
 
 const agreementItems = [
   '01.为避免出现争议，请您务必在下注之后查看“下注状况”。',
@@ -31,7 +32,100 @@ const agreementItems = [
 const noticeText =
   '公告：会员控制台已接入当前用户信息与游戏分页列表接口，赔率格与走势表暂以展示布局为主。'
 
-const quickActions = ['游戏投注', '下注明细', '账户历史']
+const quickActions = ['游戏投注', '下注明细', '期数结果', '账户历史', '个人资讯', '游戏规则']
+const gameRuleSections = [
+  {
+    id: 'australia-fantan',
+    title: '澳洲八番摊',
+    intro:
+      '本平台以澳洲幸运八 官方开奖结果为准，开奖结果第八球号码所构成的自然数总和除以4的余数，作为番摊的开奖号码。余数为1是1番、余数为2是2番、余数为3是3番、余数为0是4番。比如澳洲幸运八第八球开奖结果为 5，则计算 5 ÷ 4 = 1 …… 1，其余数为1，即开奖号码为1番。',
+    website: 'https://auluckylottery.com',
+    plays: [
+      '单双：开出13为单，开出24为双',
+      '番：彩池“X番”，开出X为赢，其他为输',
+      '念：彩池“X念Y”，开出X为赢，开出Y为和，开出其他为输',
+      '角：彩池“XY角”，开出X或者Y时为赢，其他为输',
+      '正：彩池“X正”，开出X时为赢，开出X的对面为输，开出X的两边为和；13互为对面，24互为对面',
+      '中：彩池“XYZ中”，开出X/Y/Z其中一个时为赢，其他为输',
+      '通：彩池“YZX通”，X的意思为开出遇到“通”的数字X则输，开出Y或者Z时为赢，其他为和',
+      '加：彩池“Y加ZX”，Y的意思为开出为Y数字则赢，开出Z或者X时为和，其他为输',
+    ],
+    extraTitle: '单边特码规则说明',
+    extras: [
+      '号码：指下注的特码与开出之号码第八球开奖号码相同，视为中奖，如第八球开出号码 8，下注第八球为 8 者视为中奖，其余情形视为不中奖。',
+      '两面：指单、双；大、小。',
+      '单、双：号码为双数叫双，如8、16；号码为单数叫单，如19、5。',
+      '大、小：开出之号码大于或等于11为大，小于或等于10为小。',
+    ],
+  },
+  {
+    id: 'australia-fantan-ball8',
+    title: '澳洲八番摊8球',
+    intro:
+      '本平台以澳洲幸运八 官方开奖结果为准，开奖结果每个球位号码所构成的自然数除以4的余数，作为番摊的开奖号码。余数为1是1番、余数为2是2番、余数为3是3番、余数为0是4番。比如澳洲幸运八第八球开奖结果为 5，则计算 5 ÷ 4 = 1 …… 1，其余数为1，即开奖号码为1番。',
+    website: 'https://auluckylottery.com',
+    plays: [
+      '单双：开出13为单，开出24为双',
+      '番：彩池“X番”，开出X为赢，其他为输',
+      '念：彩池“X念Y”，开出X为赢，开出Y为和，开出其他为输',
+      '角：彩池“XY角”，开出X或者Y时为赢，其他为输',
+      '正：彩池“X正”，开出X时为赢，开出X的对面为输，开出X的两边为和；13互为对面，24互为对面',
+      '中：彩池“XYZ中”，开出X/Y/Z其中一个时为赢，其他为输',
+      '通：彩池“YZX通”，X的意思为开出遇到“通”的数字X则输，开出Y或者Z时为赢，其他为和',
+      '加：彩池“Y加ZX”，Y的意思为开出为Y数字则赢，开出Z或者X时为和，其他为输',
+    ],
+    extraTitle: '单边特码规则说明',
+    extras: [
+      '号码：指下注的特码与所选球位的开奖号码相同，视为中奖，如第八球开出号码 8，下注第八球为 8 者视为中奖，其余情形视为不中奖。',
+      '两面：指单、双；大、小。',
+      '单、双：号码为双数叫双，如8、16；号码为单数叫单，如19、5。',
+      '大、小：开出之号码大于或等于11为大，小于或等于10为小。',
+    ],
+  },
+  {
+    id: 'australia-fantan-1to8',
+    title: '澳洲八番摊1到8球',
+    intro:
+      '本平台以澳洲幸运八 官方开奖结果为准，开奖结果每个球位号码所构成的自然数除以4的余数，作为番摊的开奖号码。余数为1是1番、余数为2是2番、余数为3是3番、余数为0是4番。比如澳洲幸运八第八球开奖结果为 5，则计算 5 ÷ 4 = 1 …… 1，其余数为1，即开奖号码为1番。',
+    website: 'https://auluckylottery.com',
+    plays: [
+      '单双：开出13为单，开出24为双',
+      '番：彩池“X番”，开出X为赢，其他为输',
+      '念：彩池“X念Y”，开出X为赢，开出Y为和，开出其他为输',
+      '角：彩池“XY角”，开出X或者Y时为赢，其他为输',
+      '正：彩池“X正”，开出X时为赢，开出X的对面为输，开出X的两边为和；13互为对面，24互为对面',
+      '中：彩池“XYZ中”，开出X/Y/Z其中一个时为赢，其他为输',
+      '通：彩池“YZX通”，X的意思为开出遇到“通”的数字X则输，开出Y或者Z时为赢，其他为和',
+      '加：彩池“Y加ZX”，Y的意思为开出为Y数字则赢，开出Z或者X时为和，其他为输',
+    ],
+    extraTitle: '单边特码规则说明',
+    extras: [
+      '号码：指下注的特码与所选球位的开奖号码相同，视为中奖，如第八球开出号码 8，下注第八球为 8 者视为中奖，其余情形视为不中奖。',
+      '两面：指单、双；大、小。',
+      '单、双：号码为双数叫双，如8、16；号码为单数叫单，如19、5。',
+      '大、小：开出之号码大于或等于11为大，小于或等于10为小。',
+    ],
+  },
+  {
+    id: 'canada-28',
+    title: '加拿大28',
+    intro:
+      '本平台以加拿大28官方开奖结果为准。例如：开奖号码为1，2，3。开奖结果后两位号码所构成的自然数（即2,3=23）除以4的余数为3，作为【加拿大28番摊后2】的开奖结果【3番】。开奖结果以余数为1是【1番】、余数为2是【2番】、余数为3是【3番】、余数为0是【4番】。',
+    website: 'http://jndclub.com/#/Home',
+    plays: [
+      '单双：开出13为单，开出24为双',
+      '番：彩池“X番”，开出X为赢，其他为输',
+      '念：彩池“X念Y”，开出X为赢，开出Y为和，开出其他为输',
+      '角：彩池“XY角”，开出X或者Y时为赢，其他为输',
+      '正：彩池“X正”，开出X时为赢，开出X的对面为输，开出X的两边为和；13互为对面，24互为对面',
+      '中：彩池“XYZ中”，开出X/Y/Z其中一个时为赢，其他为输',
+      '通：彩池“YZX通”，X的意思为开出遇到“通”的数字X则输，开出Y或者Z时为赢，其他为和',
+      '加：彩池“Y加ZX”，Y的意思为开出为Y数字则赢，开出Z或者X时为和，其他为输',
+    ],
+    extraTitle: '',
+    extras: [],
+  },
+]
 const topTriplePlays = ['1念2', '1念3', '1念4']
 const leftTriplePlays = ['2念1', '2念4', '2念3']
 const rightTriplePlays = ['4念1', '4念2', '4念3']
@@ -59,6 +153,15 @@ const temaSidePlays = ['特大', '特小', '特单', '特双']
 const readStoredSession = () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+const readDashboardCache = () => {
+  try {
+    const raw = localStorage.getItem(DASHBOARD_CACHE_KEY)
     return raw ? JSON.parse(raw) : null
   } catch {
     return null
@@ -113,6 +216,7 @@ const winResults = ref([])
 const winResultsLoading = ref(false)
 const winResultsError = ref('')
 const backgroundRefreshing = ref(false)
+const manualRefreshLoading = ref(false)
 const playSettings = ref([])
 const playSettingsLoading = ref(false)
 const playSettingsError = ref('')
@@ -137,6 +241,19 @@ const betsPage = ref({
   size: 6,
   totalPages: 0,
 })
+const issueResults = ref([])
+const issueResultsLoading = ref(false)
+const issueResultsError = ref('')
+const issueResultsFilters = reactive({
+  issueNo: '',
+  drawDate: '',
+})
+const issueResultsPage = ref({
+  total: 0,
+  page: 0,
+  size: 20,
+  totalPages: 0,
+})
 const dailySummary = ref([])
 const dailySummaryLoading = ref(false)
 const dailySummaryError = ref('')
@@ -154,6 +271,20 @@ const dailySummaryFilters = reactive({
   startDate: '',
   endDate: '',
 })
+const memberInfoTab = ref('profile')
+const selectedRuleSectionId = ref(gameRuleSections[0]?.id || '')
+const memberInfoPlaySettings = ref([])
+const memberInfoLoading = ref(false)
+const memberInfoError = ref('')
+const memberBalanceLogs = ref([])
+const memberBalanceLogsLoading = ref(false)
+const memberBalanceLogsError = ref('')
+const memberBalanceLogsPage = ref({
+  total: 0,
+  page: 0,
+  size: 10,
+  totalPages: 0,
+})
 const hoveredDailySummaryDate = ref('')
 const hoveredDailySummaryGameKey = ref('')
 const gamePage = ref({
@@ -170,6 +301,14 @@ let countdownTimer = null
 let dashboardPollTimer = null
 let winResultsRequestId = 0
 let drawResultsRequestId = 0
+let betsRequestId = 0
+let issueResultsRequestId = 0
+let playSettingsRequestId = 0
+let memberInfoRequestId = 0
+let memberBalanceLogsRequestId = 0
+let globalLoadingShowTimer = null
+let globalLoadingHideTimer = null
+let globalLoadingShownAt = 0
 
 const getAuthToken = () => loginResult.value?.token || ''
 
@@ -249,9 +388,408 @@ const currentPlayModeLabel = computed(() => {
   return availablePlayModes.value.find((item) => item.value === selectedPlayMode.value)?.label || '--'
 })
 
+const currentBetSideType = computed(() => {
+  if (selectedPlayMode.value === 'single') {
+    return 'SINGLE'
+  }
+  if (selectedPlayMode.value === 'double') {
+    return 'DOUBLE'
+  }
+  return ''
+})
+
 const displayedBets = computed(() => bets.value)
 const displayedDailySummary = computed(() => dailySummary.value)
 const displayedDailySummaryGames = computed(() => dailySummaryGames.value)
+const memberDisplayName = computed(() => {
+  return (
+    currentUser.value?.nickname ||
+    loginResult.value?.nickname ||
+    currentUser.value?.username ||
+    loginResult.value?.username ||
+    '--'
+  )
+})
+
+const memberStatusText = computed(() => {
+  const rawStatus =
+    currentUser.value?.status ??
+    currentUser.value?.accountStatus ??
+    currentUser.value?.memberStatus ??
+    currentUser.value?.enabled
+
+  if (rawStatus === false) {
+    return '停用'
+  }
+
+  const normalizedStatus = String(rawStatus ?? '').trim().toUpperCase()
+  if (['DISABLED', 'INACTIVE', 'FROZEN', 'LOCKED', '停用', '冻结'].includes(normalizedStatus)) {
+    return '停用'
+  }
+
+  return '启用'
+})
+
+const personalInfoCategoryLabelMap = {
+  番: '番',
+  '大小,單雙': '大小,单双',
+  大小单双: '大小单双',
+  中: '中',
+  念: '念',
+  通: '通',
+  加: '加',
+  正: '正',
+  角: '角',
+  特码: '特码',
+  '特码大单、小双': '大小单双',
+}
+
+const personalInfoCategoryOrder = ['番', '大小,单双', '中', '念', '通', '加', '正', '角', '特码', '大小单双']
+
+const getPersonalInfoCategoryLabel = (playName) => {
+  const key = resolvePlayOddsKey(playName)
+  return personalInfoCategoryLabelMap[key] || key || String(playName || '').trim() || '--'
+}
+
+const formatLimitValue = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return '--'
+  }
+
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) {
+    return String(value)
+  }
+
+  return Number.isInteger(numericValue) ? String(numericValue) : numericValue.toFixed(2)
+}
+
+const memberBalanceLogRows = computed(() => {
+  return memberBalanceLogs.value.map((item) => {
+    const amountChange = Number(item?.amountChange || 0)
+    const balanceAfter = Number(item?.balanceAfter || 0)
+    const balanceBefore = Number.isFinite(balanceAfter) && Number.isFinite(amountChange)
+      ? balanceAfter - amountChange
+      : null
+
+    return {
+      ...item,
+      balanceBefore,
+    }
+  })
+})
+
+const formatSignedMoney = (value) => {
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) {
+    return formatMoney(value)
+  }
+
+  const formatted = formatMoney(Math.abs(numericValue))
+  if (numericValue > 0) {
+    return `+${formatted}`
+  }
+  if (numericValue < 0) {
+    return `-${formatted}`
+  }
+  return formatted
+}
+
+const currentRuleSection = computed(() => {
+  return (
+    gameRuleSections.find((item) => item.id === selectedRuleSectionId.value) ||
+    gameRuleSections[0] ||
+    null
+  )
+})
+
+const getIssueResultSummary = (item) => {
+  const values = [item?.fanResult, item?.oddEvenResult]
+    .map((value) => String(value || '').trim())
+    .map((value) => value.replace(/翻/g, '番'))
+    .filter(Boolean)
+
+  return values.length ? values.join(' / ') : '--'
+}
+
+const displayedIssueResults = computed(() => issueResults.value)
+const issueResultsTotalAmount = computed(() => {
+  const total = displayedIssueResults.value.reduce((sum, item) => {
+    const value = Number(item?.memberResultAmount)
+    return sum + (Number.isFinite(value) ? value : 0)
+  }, 0)
+
+  return formatMoney(total)
+})
+
+const formatTemaResult = (value) => {
+  const text = String(value || '').trim()
+  const match = text.match(/^(\d{1,2})特$/)
+  if (!match) {
+    return text || '--'
+  }
+
+  return `${String(Number(match[1])).padStart(2, '0')}特`
+}
+
+const memberInfoSections = computed(() => {
+  const groupedByGame = new Map()
+
+  memberInfoPlaySettings.value.forEach((item) => {
+    const gameId = Number(item?.gameId || 0)
+    const categoryLabel = getPersonalInfoCategoryLabel(item?.playName || item?.playCode)
+    if (!groupedByGame.has(gameId)) {
+      groupedByGame.set(gameId, new Map())
+    }
+
+    const group = groupedByGame.get(gameId)
+    const nextPeriodLimit = Number(item?.periodLimit)
+    const nextBetLimit = Number(item?.betLimit)
+    const currentRow = group.get(categoryLabel) || {
+      label: categoryLabel,
+      periodLimit: null,
+      betLimit: null,
+    }
+
+    if (Number.isFinite(nextPeriodLimit)) {
+      currentRow.periodLimit =
+        currentRow.periodLimit === null ? nextPeriodLimit : Math.max(currentRow.periodLimit, nextPeriodLimit)
+    }
+    if (Number.isFinite(nextBetLimit)) {
+      currentRow.betLimit = currentRow.betLimit === null ? nextBetLimit : Math.max(currentRow.betLimit, nextBetLimit)
+    }
+
+    group.set(categoryLabel, currentRow)
+  })
+
+  const orderedGameIds = [
+    ...games.value
+      .map((item) => Number(item?.id || 0))
+      .filter((gameId, index, list) => gameId && list.indexOf(gameId) === index && groupedByGame.has(gameId)),
+    ...[...groupedByGame.keys()]
+      .filter((gameId) => !games.value.some((item) => Number(item?.id || 0) === gameId))
+      .sort((left, right) => left - right),
+  ]
+
+  return orderedGameIds
+    .map((gameId) => {
+      const rowsByCategory = groupedByGame.get(gameId)
+      const rows = personalInfoCategoryOrder
+        .map((label) => rowsByCategory?.get(label))
+        .filter(Boolean)
+
+      if (!rows.length) {
+        return null
+      }
+
+      const game = games.value.find((item) => Number(item?.id || 0) === gameId)
+      return {
+        gameId,
+        title: game?.gameName || `游戏${gameId}`,
+        rows,
+      }
+    })
+    .filter(Boolean)
+})
+
+const seedMemberInfoFromCurrentGame = () => {
+  if (memberInfoPlaySettings.value.length || !playSettings.value.length) {
+    return
+  }
+
+  const currentGameId = Number(selectedGameId.value || selectedGame.value?.id || 0)
+  if (!currentGameId) {
+    return
+  }
+
+  memberInfoPlaySettings.value = playSettings.value.map((item) => ({
+    ...item,
+    gameId: Number(item?.gameId || currentGameId),
+  }))
+}
+
+const queueMemberInfoPrefetch = () => {
+  if (!loginResult.value?.token || memberInfoPlaySettings.value.length || memberInfoLoading.value) {
+    return
+  }
+
+  window.setTimeout(() => {
+    if (view.value !== 'dashboard' || !loginResult.value?.token || memberInfoPlaySettings.value.length) {
+      return
+    }
+
+    void loadMemberInfo(true)
+  }, 0)
+}
+
+const saveDashboardCache = () => {
+  if (!loginResult.value?.token) {
+    return
+  }
+
+  const snapshot = {
+    userId: loginResult.value.userId ?? null,
+    currentUser: currentUser.value,
+    games: games.value,
+    gamePage: gamePage.value,
+    selectedGameId: selectedGameId.value,
+    selectedBall: selectedBall.value,
+    drawResults: drawResults.value,
+    winResults: winResults.value,
+    playSettings: playSettings.value,
+    memberInfoPlaySettings: memberInfoPlaySettings.value,
+    memberBalanceLogs: memberBalanceLogs.value,
+    memberBalanceLogsPage: memberBalanceLogsPage.value,
+    bets: bets.value,
+    betsPage: betsPage.value,
+  }
+
+  try {
+    localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(snapshot))
+  } catch {
+    // Ignore cache write failures so the UI stays responsive.
+  }
+}
+
+const restoreDashboardCache = () => {
+  const snapshot = readDashboardCache()
+  if (!snapshot || snapshot.userId !== (loginResult.value?.userId ?? null)) {
+    return false
+  }
+
+  currentUser.value = snapshot.currentUser || null
+  games.value = Array.isArray(snapshot.games) ? snapshot.games : []
+  gamePage.value = snapshot.gamePage || gamePage.value
+  selectedGameId.value =
+    snapshot.selectedGameId && snapshot.games?.some((item) => item.id === snapshot.selectedGameId)
+      ? snapshot.selectedGameId
+      : snapshot.games?.[0]?.id || null
+  drawResults.value = Array.isArray(snapshot.drawResults) ? snapshot.drawResults : []
+  winResults.value = Array.isArray(snapshot.winResults) ? snapshot.winResults : []
+  playSettings.value = Array.isArray(snapshot.playSettings) ? snapshot.playSettings : []
+  memberInfoPlaySettings.value = Array.isArray(snapshot.memberInfoPlaySettings)
+    ? snapshot.memberInfoPlaySettings
+    : []
+  memberBalanceLogs.value = Array.isArray(snapshot.memberBalanceLogs) ? snapshot.memberBalanceLogs : []
+  memberBalanceLogsPage.value = snapshot.memberBalanceLogsPage || memberBalanceLogsPage.value
+  bets.value = Array.isArray(snapshot.bets) ? snapshot.bets : []
+  betsPage.value = snapshot.betsPage || betsPage.value
+
+  const supportedBalls = gameBallConfig[Number(selectedGameId.value)] || [1]
+  selectedBall.value = supportedBalls.includes(snapshot.selectedBall)
+    ? snapshot.selectedBall
+    : supportedBalls[0]
+  startCountdown(selectedGame.value?.sealCountdownSeconds)
+  return true
+}
+
+const queueRecentBetsRefresh = (gameId, page = 0) => {
+  if (!gameId) {
+    return
+  }
+
+  window.setTimeout(() => {
+    if (
+      view.value !== 'dashboard' ||
+      activeQuickAction.value !== '游戏投注' ||
+      Number(selectedGameId.value) !== Number(gameId)
+    ) {
+      return
+    }
+
+    void loadBets(gameId, page, true)
+  }, 0)
+}
+
+const GLOBAL_LOADING_DELAY_MS = 280
+const GLOBAL_LOADING_MIN_VISIBLE_MS = 420
+const visibleGlobalLoadingText = ref('')
+const globalLoadingText = computed(() => {
+  if (dashboardLoading.value && !games.value.length) {
+    return '资料加载中...'
+  }
+  if (manualRefreshLoading.value) {
+    return '刷新中...'
+  }
+  if (dailySummarySelectedDate.value && dailySummaryGamesLoading.value) {
+    return '明细加载中...'
+  }
+  if (dailySummaryLoading.value) {
+    return '账户历史加载中...'
+  }
+  if (betsLoading.value) {
+    return '下注明细加载中...'
+  }
+  return ''
+})
+
+const clearGlobalLoadingTimers = () => {
+  window.clearTimeout(globalLoadingShowTimer)
+  window.clearTimeout(globalLoadingHideTimer)
+  globalLoadingShowTimer = null
+  globalLoadingHideTimer = null
+}
+
+watch(
+  globalLoadingText,
+  (nextText) => {
+    window.clearTimeout(globalLoadingHideTimer)
+    globalLoadingHideTimer = null
+
+    if (nextText) {
+      if (visibleGlobalLoadingText.value) {
+        visibleGlobalLoadingText.value = nextText
+        return
+      }
+
+      window.clearTimeout(globalLoadingShowTimer)
+      globalLoadingShowTimer = window.setTimeout(() => {
+        visibleGlobalLoadingText.value = nextText
+        globalLoadingShownAt = Date.now()
+        globalLoadingShowTimer = null
+      }, GLOBAL_LOADING_DELAY_MS)
+      return
+    }
+
+    window.clearTimeout(globalLoadingShowTimer)
+    globalLoadingShowTimer = null
+
+    if (!visibleGlobalLoadingText.value) {
+      return
+    }
+
+    const elapsed = Date.now() - globalLoadingShownAt
+    const remaining = Math.max(0, GLOBAL_LOADING_MIN_VISIBLE_MS - elapsed)
+    globalLoadingHideTimer = window.setTimeout(() => {
+      visibleGlobalLoadingText.value = ''
+      globalLoadingShownAt = 0
+      globalLoadingHideTimer = null
+    }, remaining)
+  },
+  { immediate: true },
+)
+
+const betsPageTotals = computed(() => {
+  return displayedBets.value.reduce(
+    (accumulator, item) => {
+      accumulator.count += 1
+      accumulator.betAmount += Number(item?.betAmount) || 0
+      accumulator.validAmount += Number(item?.validAmount) || 0
+      accumulator.payoutAmount += Number(item?.payoutAmount) || 0
+      accumulator.rebateAmount += Number(item?.rebateAmount) || 0
+      accumulator.resultAmount += Number(item?.resultAmount) || 0
+      return accumulator
+    },
+    {
+      count: 0,
+      betAmount: 0,
+      validAmount: 0,
+      payoutAmount: 0,
+      rebateAmount: 0,
+      resultAmount: 0,
+    },
+  )
+})
 const dailySummaryTotals = computed(() => {
   return displayedDailySummary.value.reduce(
     (accumulator, item) => {
@@ -424,6 +962,33 @@ const latestDrawNumbers = computed(() => {
     .split('')
     .filter(Boolean)
 })
+
+const latestDrawActiveIndices = computed(() => {
+  const numberCount = latestDrawNumbers.value.length
+  if (!numberCount || (numberCount === 1 && latestDrawNumbers.value[0] === '加载中')) {
+    return []
+  }
+
+  if ([4, 5, 6].includes(Number(selectedGame.value?.id || 0))) {
+    return [Math.max(0, numberCount - 2), numberCount - 1]
+  }
+
+  return [numberCount - 1]
+})
+
+const getHighlightedResultIndices = (gameId, numbers, ballIndex) => {
+  const numberCount = Array.isArray(numbers) ? numbers.length : 0
+  if (!numberCount) {
+    return []
+  }
+
+  if ([4, 5, 6].includes(Number(gameId || 0))) {
+    return [Math.max(0, numberCount - 2), numberCount - 1]
+  }
+
+  const rawBallIndex = Number(ballIndex)
+  return Number.isFinite(rawBallIndex) && rawBallIndex > 0 ? [rawBallIndex - 1] : []
+}
 
 const latestDrawSpecial = computed(() => {
   if (isDrawDisplayLoading.value) {
@@ -685,6 +1250,9 @@ const formatBallIndexLabel = (ballIndex) => {
 
 const formatResultStatusLabel = (resultStatus) => {
   const normalizedStatus = String(resultStatus || '').trim().toUpperCase()
+  if (normalizedStatus === 'PENDING') {
+    return '未开奖'
+  }
   if (normalizedStatus === 'WIN') {
     return '中奖'
   }
@@ -773,18 +1341,21 @@ const getBetDetailWithoutIssue = (bet) => {
 }
 
 const getBetResultDisplay = (bet) => {
+  const gameId = Number(bet?.gameId || selectedGame.value?.id || 0)
   const numbers = parseDrawCodeNumbers(bet?.drawCode)
   const tail = extractResultTail(bet?.resultDetail)
-
-  if (!numbers.length && !tail) {
-    return null
-  }
+  const betDetailText = getBetDetailWithoutIssue(bet)
+  const oddsText = getBetOddsDisplay(bet)
+  const highlightIndices = getHighlightedResultIndices(gameId, numbers, bet?.ballIndex)
 
   return {
-    title: getBetDetailWithoutIssue(bet),
-    numbers,
-    highlightIndex: Math.max(0, Number(bet?.ballIndex || 1) - 1),
+    detailSummary: `${betDetailText} @ ${oddsText}`,
+    resultNumbers: numbers.map((value, index) => ({
+      value,
+      active: highlightIndices.includes(index),
+    })),
     tail,
+    hasResult: numbers.length > 0 || Boolean(tail),
   }
 }
 
@@ -792,6 +1363,8 @@ const trendRows = computed(() => {
   const rowCount = 10
   const columnCount = 12
   const maxCellCount = rowCount * columnCount
+  const trailingBlankCount = 4
+  const maxFilledCellCount = Math.max(0, maxCellCount - trailingBlankCount)
   const matrix = Array.from({ length: rowCount }, () => Array.from({ length: columnCount }, () => ''))
 
   const orderedFanValues = [...winResults.value]
@@ -799,7 +1372,7 @@ const trendRows = computed(() => {
     .map((item) => String(item?.fanResult || '').match(/([1-4])/))
     .map((match) => (match ? Number(match[1]) : null))
     .filter((value) => value !== null)
-    .slice(-maxCellCount)
+    .slice(-maxFilledCellCount)
 
   orderedFanValues.forEach((value, index) => {
     const rowIndex = index % rowCount
@@ -965,11 +1538,24 @@ const loadDashboard = async (silent = false) => {
         }
       }
       startCountdown(selectedGame.value?.sealCountdownSeconds)
-      await loadDrawResults(selectedGameId.value, silent)
-      await loadWinResults(selectedGameId.value, silent)
-      await loadBets(selectedGameId.value, silent ? betsPage.value.page : 0, silent)
+      saveDashboardCache()
+      const detailTasks = [loadDrawResults(selectedGameId.value, silent), loadWinResults(selectedGameId.value, silent)]
       if (!silent || previousGameId !== selectedGameId.value || !playSettings.value.length) {
-        await loadPlaySettings(selectedGameId.value, silent)
+        detailTasks.push(loadPlaySettings(selectedGameId.value, silent))
+      }
+
+      if (silent) {
+        await Promise.all(detailTasks)
+        if (activeQuickAction.value === '游戏投注') {
+          queueRecentBetsRefresh(selectedGameId.value, betsPage.value.page)
+        }
+        queueMemberInfoPrefetch()
+      } else {
+        void Promise.all(detailTasks)
+        if (activeQuickAction.value === '游戏投注') {
+          queueRecentBetsRefresh(selectedGameId.value, 0)
+        }
+        queueMemberInfoPrefetch()
       }
     } else {
       selectedGameId.value = null
@@ -982,6 +1568,7 @@ const loadDashboard = async (silent = false) => {
       betsError.value = ''
       playSettings.value = []
       playSettingsError.value = ''
+      saveDashboardCache()
     }
   } catch (error) {
     dashboardError.value = error instanceof Error ? error.message : '控制台加载失败'
@@ -998,6 +1585,8 @@ const loadPlaySettings = async (gameId, silent = false) => {
     return
   }
 
+  const requestId = ++playSettingsRequestId
+
   if (!silent) {
     playSettingsLoading.value = true
     playSettingsError.value = ''
@@ -1009,21 +1598,31 @@ const loadPlaySettings = async (gameId, silent = false) => {
     const settingsList =
       pageData.records || pageData.content || pageData.list || pageData.items || []
 
+    if (requestId !== playSettingsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
+
     playSettings.value = Array.isArray(settingsList) ? settingsList : []
+    saveDashboardCache()
   } catch (error) {
+    if (requestId !== playSettingsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
+
     if (!silent) {
       playSettings.value = []
       playSettingsError.value =
         error instanceof Error ? error.message : '玩法赔率加载失败'
     }
   } finally {
-    if (!silent) {
+    if (!silent && requestId === playSettingsRequestId && Number(selectedGameId.value) === Number(gameId)) {
       playSettingsLoading.value = false
     }
   }
 }
 
 const loadBets = async (gameId, page = 0, silent = false) => {
+  const requestId = ++betsRequestId
   const query = new URLSearchParams({
     page: String(page),
     size: String(betsPage.value.size),
@@ -1055,6 +1654,10 @@ const loadBets = async (gameId, page = 0, silent = false) => {
     const betList =
       pageData.records || pageData.content || pageData.list || pageData.items || []
 
+    if (requestId !== betsRequestId) {
+      return
+    }
+
     bets.value = Array.isArray(betList) ? betList : []
     betsPage.value = {
       total: pageData.total || 0,
@@ -1062,13 +1665,18 @@ const loadBets = async (gameId, page = 0, silent = false) => {
       size: pageData.size || betsPage.value.size,
       totalPages: pageData.totalPages || 0,
     }
+    saveDashboardCache()
   } catch (error) {
+    if (requestId !== betsRequestId) {
+      return
+    }
+
     if (!silent) {
       bets.value = []
       betsError.value = error instanceof Error ? error.message : '下注明细加载失败'
     }
   } finally {
-    if (!silent) {
+    if (!silent && requestId === betsRequestId) {
       betsLoading.value = false
     }
   }
@@ -1150,6 +1758,145 @@ const loadDailySummaryGames = async (tradeDate, silent = false) => {
   }
 }
 
+const loadMemberInfo = async (silent = false) => {
+  const requestId = ++memberInfoRequestId
+
+  if (!silent) {
+    memberInfoLoading.value = true
+    memberInfoError.value = ''
+  }
+
+  try {
+    const [currentPayload, settingsPayload] = await Promise.all([
+      apiFetch('/api/member/current'),
+      apiFetch('/api/member/game-play-settings?page=0&size=200'),
+    ])
+
+    if (requestId !== memberInfoRequestId) {
+      return
+    }
+
+    currentUser.value = currentPayload.data || currentUser.value
+    const pageData = settingsPayload.data || settingsPayload
+    const settingsList =
+      pageData.records || pageData.content || pageData.list || pageData.items || []
+
+    memberInfoPlaySettings.value = Array.isArray(settingsList) ? settingsList : []
+    saveDashboardCache()
+  } catch (error) {
+    if (requestId !== memberInfoRequestId) {
+      return
+    }
+
+    if (!silent) {
+      memberInfoPlaySettings.value = []
+      memberInfoError.value = error instanceof Error ? error.message : '个人资讯加载失败'
+    }
+  } finally {
+    if (!silent && requestId === memberInfoRequestId) {
+      memberInfoLoading.value = false
+    }
+  }
+}
+
+const loadMemberBalanceLogs = async (page = 0, silent = false) => {
+  const requestId = ++memberBalanceLogsRequestId
+  const query = new URLSearchParams({
+    page: String(page),
+    size: String(memberBalanceLogsPage.value.size),
+  })
+
+  if (!silent) {
+    memberBalanceLogsLoading.value = true
+    memberBalanceLogsError.value = ''
+  }
+
+  try {
+    const payload = await apiFetch(`/api/member/balance-logs?${query.toString()}`)
+    if (requestId !== memberBalanceLogsRequestId) {
+      return
+    }
+
+    const pageData = payload.data || payload
+    const list = pageData.records || pageData.content || pageData.list || pageData.items || []
+    memberBalanceLogs.value = Array.isArray(list) ? list : []
+    memberBalanceLogsPage.value = {
+      total: pageData.total || 0,
+      page: pageData.page || 0,
+      size: pageData.size || memberBalanceLogsPage.value.size,
+      totalPages: pageData.totalPages || 0,
+    }
+    saveDashboardCache()
+  } catch (error) {
+    if (requestId !== memberBalanceLogsRequestId) {
+      return
+    }
+
+    if (!silent) {
+      memberBalanceLogs.value = []
+      memberBalanceLogsError.value = error instanceof Error ? error.message : '会员账本加载失败'
+    }
+  } finally {
+    if (!silent && requestId === memberBalanceLogsRequestId) {
+      memberBalanceLogsLoading.value = false
+    }
+  }
+}
+
+const loadIssueResults = async (gameId, page = 0, silent = false) => {
+  if (!gameId) {
+    issueResults.value = []
+    issueResultsError.value = ''
+    return
+  }
+
+  const requestId = ++issueResultsRequestId
+  const query = new URLSearchParams({
+    gameId: String(gameId),
+    page: String(page),
+    size: String(issueResultsPage.value.size),
+  })
+
+  if (issueResultsFilters.issueNo.trim()) {
+    query.set('issueNo', issueResultsFilters.issueNo.trim())
+  }
+
+  if (!silent) {
+    issueResultsLoading.value = true
+    issueResultsError.value = ''
+  }
+
+  try {
+    const payload = await apiFetch(`/api/member/game-win-results?${query.toString()}`)
+    if (requestId !== issueResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
+
+    const pageData = payload.data || payload
+    const list = pageData.records || pageData.content || pageData.list || pageData.items || []
+    issueResults.value = Array.isArray(list) ? list : []
+    issueResultsPage.value = {
+      total: pageData.total || 0,
+      page: pageData.page || 0,
+      size: pageData.size || issueResultsPage.value.size,
+      totalPages: pageData.totalPages || 0,
+    }
+  } catch (error) {
+    if (requestId !== issueResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
+      return
+    }
+
+    if (!silent) {
+      issueResults.value = []
+      issueResultsError.value = error instanceof Error ? error.message : '期数结果加载失败'
+    }
+  } finally {
+    if (!silent && requestId === issueResultsRequestId && Number(selectedGameId.value) === Number(gameId)) {
+      issueResultsLoading.value = false
+    }
+  }
+}
+
 const loadWinResults = async (gameId, silent = false) => {
   if (!gameId) {
     winResults.value = []
@@ -1181,6 +1928,7 @@ const loadWinResults = async (gameId, silent = false) => {
     }
 
     winResults.value = Array.isArray(resultList) ? resultList : []
+    saveDashboardCache()
   } catch (error) {
     if (requestId !== winResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
       return
@@ -1239,6 +1987,7 @@ const loadDrawResults = async (gameId, silent = false) => {
           return compareIssueNo(b.issueNo, a.issueNo)
         })
       : []
+    saveDashboardCache()
   } catch (error) {
     if (requestId !== drawResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
       return
@@ -1262,12 +2011,19 @@ const stopAutoRefresh = () => {
 }
 
 const refreshActiveView = async () => {
-  if (!selectedGameId.value) {
+  if (activeQuickAction.value === '下注明细') {
+    if (!selectedGameId.value) {
+      return
+    }
+    await loadBets(selectedGameId.value, betsPage.value.page, true)
     return
   }
 
-  if (activeQuickAction.value === '下注明细') {
-    await loadBets(selectedGameId.value, betsPage.value.page, true)
+  if (activeQuickAction.value === '期数结果') {
+    if (!selectedGameId.value) {
+      return
+    }
+    await loadIssueResults(selectedGameId.value, issueResultsPage.value.page, true)
     return
   }
 
@@ -1277,6 +2033,23 @@ const refreshActiveView = async () => {
       return
     }
     await loadDailySummary(null, dailySummaryPage.value.page, true)
+    return
+  }
+
+  if (activeQuickAction.value === '个人资讯') {
+    if (memberInfoTab.value === 'ledger') {
+      await Promise.all([loadMemberInfo(true), loadMemberBalanceLogs(memberBalanceLogsPage.value.page, true)])
+      return
+    }
+    await loadMemberInfo(true)
+    return
+  }
+
+  if (activeQuickAction.value === '游戏规则') {
+    return
+  }
+
+  if (!selectedGameId.value) {
     return
   }
 
@@ -1327,6 +2100,7 @@ const handleSubmit = async () => {
     successMessage.value = data.message || '登录成功'
     view.value = 'agreement'
     localStorage.removeItem(AGREEMENT_KEY)
+    localStorage.removeItem(DASHBOARD_CACHE_KEY)
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
   } catch (error) {
@@ -1360,11 +2134,76 @@ const changePlayMode = (mode) => {
   selectedPlayMode.value = mode
 }
 
+const selectMemberInfoTab = async (tab) => {
+  memberInfoTab.value = tab
+  if (tab === 'ledger' && !memberBalanceLogs.value.length) {
+    await loadMemberBalanceLogs(0, false)
+  }
+}
+
+const changeMemberBalanceLogsPage = async (nextPage) => {
+  if (nextPage < 0) {
+    return
+  }
+  if (memberBalanceLogsPage.value.totalPages > 0 && nextPage >= memberBalanceLogsPage.value.totalPages) {
+    return
+  }
+
+  await loadMemberBalanceLogs(nextPage, false)
+}
+
+const applyIssueResultsFilters = async () => {
+  await loadIssueResults(selectedGameId.value, 0, false)
+}
+
+const resetIssueResultsFilters = async () => {
+  issueResultsFilters.issueNo = ''
+  issueResultsFilters.drawDate = ''
+  await loadIssueResults(selectedGameId.value, 0, false)
+}
+
+const changeIssueResultsPage = async (nextPage) => {
+  if (nextPage < 0) {
+    return
+  }
+  if (issueResultsPage.value.totalPages > 0 && nextPage >= issueResultsPage.value.totalPages) {
+    return
+  }
+
+  await loadIssueResults(selectedGameId.value, nextPage, false)
+}
+
+const handleIssueResultsGameChange = async (value) => {
+  const nextGameId = Number(value || 0) || null
+  if (!nextGameId || Number(selectedGameId.value) === nextGameId) {
+    return
+  }
+
+  await selectGame(nextGameId)
+}
+
+const openGameBetting = async () => {
+  activeQuickAction.value = '游戏投注'
+  if (selectedGameId.value) {
+    await Promise.all([
+      loadDrawResults(selectedGameId.value, false),
+      loadWinResults(selectedGameId.value, false),
+      loadPlaySettings(selectedGameId.value, false),
+    ])
+    queueRecentBetsRefresh(selectedGameId.value, 0)
+  }
+}
+
 const selectQuickAction = async (action) => {
   activeQuickAction.value = action
   if (action === '下注明细') {
     resetBetsFilters()
     await loadBets(selectedGameId.value, 0, false)
+    return
+  }
+
+  if (action === '期数结果') {
+    await loadIssueResults(selectedGameId.value, 0, false)
     return
   }
 
@@ -1375,12 +2214,32 @@ const selectQuickAction = async (action) => {
     return
   }
 
+  if (action === '个人资讯') {
+    seedMemberInfoFromCurrentGame()
+    if (memberInfoPlaySettings.value.length) {
+      memberInfoError.value = ''
+      if (memberInfoTab.value === 'ledger' && !memberBalanceLogs.value.length) {
+        void loadMemberBalanceLogs(0, true)
+      }
+      void loadMemberInfo(true)
+      return
+    }
+    if (memberInfoTab.value === 'ledger') {
+      await Promise.all([loadMemberInfo(false), loadMemberBalanceLogs(0, false)])
+      return
+    }
+    await loadMemberInfo(false)
+    return
+  }
+
   if (action === '游戏投注' && selectedGameId.value) {
+    resetBetsFilters()
     await Promise.all([
       loadDrawResults(selectedGameId.value, false),
       loadWinResults(selectedGameId.value, false),
-      loadBets(selectedGameId.value, 0, false),
+      loadPlaySettings(selectedGameId.value, false),
     ])
+    queueRecentBetsRefresh(selectedGameId.value, 0)
   }
 }
 
@@ -1429,6 +2288,11 @@ const selectGame = async (gameId) => {
     return
   }
 
+  if (activeQuickAction.value === '期数结果') {
+    await loadIssueResults(gameId, 0, false)
+    return
+  }
+
   if (activeQuickAction.value === '账户历史') {
     if (dailySummarySelectedDate.value) {
       await loadDailySummaryGames(dailySummarySelectedDate.value, false)
@@ -1438,12 +2302,20 @@ const selectGame = async (gameId) => {
     return
   }
 
+  if (activeQuickAction.value === '个人资讯') {
+    return
+  }
+
+  if (activeQuickAction.value === '游戏规则') {
+    return
+  }
+
   await Promise.all([
     loadDrawResults(gameId, false),
     loadWinResults(gameId, false),
-    loadBets(gameId, 0, false),
     loadPlaySettings(gameId, false),
   ])
+  queueRecentBetsRefresh(gameId, 0)
 }
 
 const changeBetsPage = async (nextPage) => {
@@ -1540,7 +2412,12 @@ const ensureDailySummaryDefaultFilters = () => {
 }
 
 const refreshDashboard = async () => {
-  await loadDashboard()
+  manualRefreshLoading.value = true
+  try {
+    await refreshActiveView()
+  } finally {
+    manualRefreshLoading.value = false
+  }
 }
 
 const selectBall = (ball) => {
@@ -1651,6 +2528,7 @@ const submitBet = async () => {
           memberId: item.memberId || currentMemberId.value,
           gameId: selectedGame.value.id,
           gamePlayId,
+          ...(currentBetSideType.value ? { betSideType: currentBetSideType.value } : {}),
           ...(gamesWithoutBallSelector.includes(Number(selectedGame.value.id))
             ? {}
             : { ballIndex: selectedBall.value }),
@@ -1682,6 +2560,7 @@ const logout = () => {
   stopAutoRefresh()
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(AGREEMENT_KEY)
+  localStorage.removeItem(DASHBOARD_CACHE_KEY)
   form.username = ''
   form.password = ''
   loginResult.value = null
@@ -1697,7 +2576,9 @@ onMounted(async () => {
   if (loginResult.value && localStorage.getItem(AGREEMENT_KEY) === '1') {
     view.value = 'dashboard'
     activeQuickAction.value = '游戏投注'
+    restoreDashboardCache()
     await loadDashboard()
+    queueMemberInfoPrefetch()
     startAutoRefresh()
   }
 })
@@ -1705,6 +2586,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.clearInterval(countdownTimer)
   stopAutoRefresh()
+  clearGlobalLoadingTimers()
 })
 </script>
 
@@ -1788,6 +2670,9 @@ onBeforeUnmount(() => {
   <main v-else class="console-page">
     <header class="console-topbar">
       <div class="console-brand">麒麟盛世</div>
+      <div v-if="visibleGlobalLoadingText" class="console-global-loading">
+        {{ visibleGlobalLoadingText }}
+      </div>
     </header>
 
     <section class="console-announcement">
@@ -1807,12 +2692,12 @@ onBeforeUnmount(() => {
             <strong>{{ currentUser?.balance ?? '--' }}</strong>
           </div>
           <div class="user-row">
-            <span>状态</span>
-            <strong>在线</strong>
+            <span>今日输赢</span>
+            <strong>{{ formatMoney(currentUser?.todayResultAmount) }}</strong>
           </div>
           <div class="user-row">
-            <span>剩余期数</span>
-            <strong>{{ gamePage.total }}</strong>
+            <span>未结算金额</span>
+            <strong>{{ formatMoney(currentUser?.unsettledOrderAmount) }}</strong>
           </div>
         </div>
 
@@ -1917,9 +2802,9 @@ onBeforeUnmount(() => {
           <h3>最近注单</h3>
 
           <p v-if="betsError" class="bill-message is-error">{{ betsError }}</p>
-          <p v-else-if="betsLoading" class="bill-message">下注明细加载中...</p>
+          <p v-else-if="betsLoading && !displayedBets.length" class="bill-message">下注明细加载中...</p>
 
-          <template v-else>
+          <template v-if="!betsError">
             <div class="bill-table">
               <div class="bill-head">游戏</div>
               <div class="bill-head">下注明细</div>
@@ -1972,17 +2857,13 @@ onBeforeUnmount(() => {
           </div>
 
           <p v-if="betsError" class="console-message is-error">{{ betsError }}</p>
-          <p v-else-if="betsLoading" class="console-message">下注明细加载中...</p>
+          <p v-else-if="betsLoading && !displayedBets.length" class="console-message">下注明细加载中...</p>
 
-          <div v-else class="bets-table-wrap">
+          <div v-if="!betsError" class="bets-table-wrap">
             <div class="bets-table">
               <div class="bets-head">订单号</div>
               <div class="bets-head">下注时间</div>
               <div class="bets-head">下注类型</div>
-              <div class="bets-head">球位</div>
-              <div class="bets-head">玩法</div>
-              <div class="bets-head">下注明细</div>
-              <div class="bets-head">赔率</div>
               <div class="bets-head">开奖结果说明</div>
               <div class="bets-head">金额</div>
               <div class="bets-head">有效金额</div>
@@ -2000,30 +2881,29 @@ onBeforeUnmount(() => {
                     <span class="bill-type-name">{{ bet.betType || '--' }}</span>
                     <span class="bill-type-issue">{{ bet.issueNo || '--' }}</span>
                   </div>
-                  <div class="bets-cell">{{ formatBallIndexLabel(bet.ballIndex) }}</div>
-                  <div class="bets-cell">{{ bet.playName || '--' }}</div>
-                  <div class="bets-cell">{{ getBetDetailWithoutIssue(bet) }}</div>
-                  <div class="bets-cell">{{ getBetOddsDisplay(bet) }}</div>
                   <div class="bets-cell bets-result-cell">
                     <template v-if="getBetResultDisplay(bet)">
                       <div class="bets-result-card">
-                        <div class="bets-result-row">
-                          <span class="bets-result-label">结果：</span>
-                          <span
-                            v-for="(num, index) in getBetResultDisplay(bet).numbers"
-                            :key="`${bet.orderNo || 'bet'}-${index}-${num}`"
-                            class="bets-result-number"
-                            :class="{ active: index === getBetResultDisplay(bet).highlightIndex }"
-                          >
-                            {{ num }}
+                        <div class="bets-result-line">{{ getBetResultDisplay(bet).detailSummary }}</div>
+                        <div v-if="getBetResultDisplay(bet).hasResult" class="bets-result-line">
+                          <span>结果：</span>
+                          <span class="bets-result-numbers">
+                            <span
+                              v-for="(item, index) in getBetResultDisplay(bet).resultNumbers"
+                              :key="`${bet.orderNo || bet.issueNo || 'bet'}-${index}`"
+                              :class="['bets-result-number', { 'is-hit': item.active }]"
+                            >
+                              {{ item.value }}
+                            </span>
                           </span>
-                          <span v-if="getBetResultDisplay(bet).tail" class="bets-result-tail">
-                            {{ getBetResultDisplay(bet).tail }}
-                          </span>
+                          <template v-if="getBetResultDisplay(bet).tail">
+                            <span> = </span>
+                            <span class="bets-result-tail">{{ getBetResultDisplay(bet).tail }}</span>
+                          </template>
                         </div>
                       </div>
                     </template>
-                    <template v-else>{{ bet.resultDetail || '--' }}</template>
+                    <template v-else>{{ getBetDetailWithoutIssue(bet) }} @ {{ getBetOddsDisplay(bet) }}</template>
                   </div>
                   <div class="bets-cell">{{ bet.betAmount ?? '--' }}</div>
                   <div class="bets-cell">{{ bet.validAmount ?? '--' }}</div>
@@ -2033,6 +2913,17 @@ onBeforeUnmount(() => {
                   <div class="bets-cell">{{ formatResultStatusLabel(bet.resultStatus) }}</div>
                   <div class="bets-cell">{{ bet.status || '--' }}</div>
                 </template>
+                <div class="bets-cell history-total-cell">本页统计</div>
+                <div class="bets-cell history-total-cell">--</div>
+                <div class="bets-cell history-total-cell">--</div>
+                <div class="bets-cell history-total-cell">{{ betsPageTotals.count }}笔</div>
+                <div class="bets-cell history-total-cell">{{ formatMoney(betsPageTotals.betAmount) }}</div>
+                <div class="bets-cell history-total-cell">{{ formatMoney(betsPageTotals.validAmount) }}</div>
+                <div class="bets-cell history-total-cell">{{ formatMoney(betsPageTotals.payoutAmount) }}</div>
+                <div class="bets-cell history-total-cell">{{ formatMoney(betsPageTotals.rebateAmount) }}</div>
+                <div class="bets-cell history-total-cell">{{ formatMoney(betsPageTotals.resultAmount) }}</div>
+                <div class="bets-cell history-total-cell">--</div>
+                <div class="bets-cell history-total-cell">--</div>
               </template>
               <template v-else>
                 <div class="bets-empty">暂无下注明细</div>
@@ -2053,6 +2944,123 @@ onBeforeUnmount(() => {
               type="button"
               :disabled="betsPage.totalPages > 0 && betsPage.page >= betsPage.totalPages - 1"
               @click="changeBetsPage(betsPage.page + 1)"
+            >
+              下一页
+            </button>
+          </div>
+        </section>
+
+        <section v-else-if="activeQuickAction === '期数结果'" class="bets-view">
+          <div class="issue-results-toolbar">
+            <div class="issue-results-toolbar-title">彩票开奖结果</div>
+            <label class="issue-results-toolbar-field">
+              <span>彩票类型:</span>
+              <select :value="selectedGameId || ''" @change="handleIssueResultsGameChange($event.target.value)">
+                <option v-for="game in games" :key="game.id" :value="game.id">
+                  {{ game.gameName }}
+                </option>
+              </select>
+            </label>
+            <label class="issue-results-toolbar-field">
+              <span>期数:</span>
+              <input
+                v-model="issueResultsFilters.issueNo"
+                type="text"
+                placeholder="请输入期号"
+                @change="applyIssueResultsFilters"
+              />
+            </label>
+            <label class="issue-results-toolbar-field">
+              <span>时间:</span>
+              <input v-model="issueResultsFilters.drawDate" type="date" />
+            </label>
+            <button type="button" class="issue-results-toolbar-button" @click="applyIssueResultsFilters">搜索</button>
+            <button type="button" class="issue-results-toolbar-button" @click="openGameBetting">返回投注页面</button>
+          </div>
+
+          <p v-if="issueResultsError" class="console-message is-error">{{ issueResultsError }}</p>
+          <p v-else-if="issueResultsLoading && !displayedIssueResults.length" class="console-message">期数结果加载中...</p>
+
+          <div v-if="!issueResultsError" class="bets-table-wrap">
+            <div class="issue-results-table">
+              <div class="bets-head">期数</div>
+              <div class="bets-head">开奖时间</div>
+              <div class="bets-head">开奖号码</div>
+              <div class="bets-head issue-results-head-span">开奖结果</div>
+              <div class="bets-head issue-results-last-col">期输赢</div>
+
+              <div class="bets-cell issue-results-total-cell">总计：</div>
+              <div class="bets-cell issue-results-total-cell">--</div>
+              <div class="bets-cell issue-results-total-cell">--</div>
+              <div class="bets-cell issue-results-total-cell issue-results-total-span">--</div>
+              <div
+                class="bets-cell issue-results-total-cell issue-results-amount-cell issue-results-last-col"
+                :class="{ 'is-positive': Number(issueResultsTotalAmount) > 0, 'is-negative': Number(issueResultsTotalAmount) < 0 }"
+              >
+                {{ issueResultsTotalAmount }}
+              </div>
+
+              <template v-if="displayedIssueResults.length">
+                <template v-for="item in displayedIssueResults" :key="item.id || item.issueNo">
+                  <div class="bets-cell">{{ item.issueNo || '--' }}</div>
+                  <div class="bets-cell">{{ formatDateTime(item.drawTime) }}</div>
+                  <div class="bets-cell issue-results-code-cell">
+                    <div class="draw-balls issue-results-balls">
+                      <span
+                        v-for="(ball, index) in parseDrawCodeNumbers(item.drawCode)"
+                        :key="`${item.issueNo || 'issue'}-${index}`"
+                        :class="[
+                          'draw-ball',
+                          'issue-result-ball',
+                          {
+                            active: getHighlightedResultIndices(
+                              item.gameId || selectedGameId,
+                              parseDrawCodeNumbers(item.drawCode),
+                              item.ballIndex,
+                            ).includes(index),
+                          },
+                        ]"
+                      >
+                        {{ ball }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="bets-cell issue-results-result-cell issue-results-fan-cell">
+                    {{ String(item.fanResult || '--').replace(/翻/g, '番') }}
+                  </div>
+                  <div class="bets-cell issue-results-result-cell">
+                    {{ item.oddEvenResult || '--' }}
+                  </div>
+                  <div class="bets-cell issue-results-result-cell">
+                    {{ Number(item.gameId || selectedGameId) === 4 ? '-' : formatTemaResult(item.temaResult) }}
+                  </div>
+                  <div
+                    class="bets-cell issue-results-amount-cell issue-results-last-col"
+                    :class="{ 'is-positive': Number(item.memberResultAmount) > 0, 'is-negative': Number(item.memberResultAmount) < 0 }"
+                  >
+                    {{ formatMoney(item.memberResultAmount) }}
+                  </div>
+                </template>
+              </template>
+              <template v-else>
+                <div class="bets-empty">暂无期数结果</div>
+              </template>
+            </div>
+          </div>
+
+          <div v-if="!issueResultsLoading && !issueResultsError" class="bets-view-pagination bets-view-pagination-footer">
+            <button
+              type="button"
+              :disabled="issueResultsPage.page <= 0"
+              @click="changeIssueResultsPage(issueResultsPage.page - 1)"
+            >
+              上一页
+            </button>
+            <span>{{ (issueResultsPage.page || 0) + 1 }} / {{ issueResultsPage.totalPages || 1 }}</span>
+            <button
+              type="button"
+              :disabled="issueResultsPage.totalPages > 0 && issueResultsPage.page >= issueResultsPage.totalPages - 1"
+              @click="changeIssueResultsPage(issueResultsPage.page + 1)"
             >
               下一页
             </button>
@@ -2085,13 +3093,24 @@ onBeforeUnmount(() => {
           <p v-if="dailySummarySelectedDate && dailySummaryGamesError" class="console-message is-error">
             {{ dailySummaryGamesError }}
           </p>
-          <p v-else-if="dailySummarySelectedDate && dailySummaryGamesLoading" class="console-message">
+          <p
+            v-else-if="dailySummarySelectedDate && dailySummaryGamesLoading && !displayedDailySummaryGames.length"
+            class="console-message"
+          >
             账户历史明细加载中...
           </p>
           <p v-else-if="dailySummaryError" class="console-message is-error">{{ dailySummaryError }}</p>
-          <p v-else-if="dailySummaryLoading" class="console-message">账户历史加载中...</p>
+          <p v-else-if="dailySummaryLoading && !displayedDailySummary.length" class="console-message">
+            账户历史加载中...
+          </p>
 
-          <div v-else class="bets-table-wrap">
+          <div
+            v-if="
+              !(dailySummarySelectedDate && dailySummaryGamesError) &&
+              !dailySummaryError
+            "
+            class="bets-table-wrap"
+          >
             <template v-if="dailySummarySelectedDate">
               <div class="history-table history-table-detail">
                 <div class="bets-head">交易日期</div>
@@ -2316,17 +3335,191 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <section v-else-if="activeQuickAction === '个人资讯'" class="member-info-view">
+          <div class="member-info-shell">
+            <div class="member-info-top">
+              <div class="member-info-tabs">
+                <button
+                  type="button"
+                  class="member-info-tab"
+                  :class="{ 'is-active': memberInfoTab === 'profile' }"
+                  @click="selectMemberInfoTab('profile')"
+                >
+                  个人资讯
+                </button>
+                <button
+                  type="button"
+                  class="member-info-tab"
+                  :class="{ 'is-active': memberInfoTab === 'ledger' }"
+                  @click="selectMemberInfoTab('ledger')"
+                >
+                  会员账本
+                </button>
+              </div>
+
+              <div class="member-info-summary">
+                <div class="member-info-label">账号:</div>
+                <div class="member-info-value">{{ currentUser?.username || displayName }}</div>
+                <div class="member-info-label">会员名称:</div>
+                <div class="member-info-value">{{ memberDisplayName }}</div>
+
+                <div class="member-info-label">可用额度:</div>
+                <div class="member-info-value">{{ formatMoney(currentUser?.balance) }}</div>
+                <div class="member-info-label">账号状态:</div>
+                <div class="member-info-value">{{ memberStatusText }}</div>
+              </div>
+            </div>
+
+            <template v-if="memberInfoTab === 'profile'">
+              <p v-if="memberInfoError" class="console-message is-error">{{ memberInfoError }}</p>
+              <p v-else-if="memberInfoLoading && !memberInfoSections.length" class="console-message">
+                个人资讯加载中...
+              </p>
+
+              <div v-if="!memberInfoError" class="member-info-sections">
+                <template v-if="memberInfoSections.length">
+                  <section
+                    v-for="section in memberInfoSections"
+                    :key="section.gameId"
+                    class="member-info-card"
+                  >
+                    <div class="member-info-card-title">{{ section.title }}</div>
+                    <div class="member-info-table">
+                      <div class="member-info-head">玩法</div>
+                      <div class="member-info-head">单注最高</div>
+                      <div class="member-info-head">单期限高</div>
+                      <div class="member-info-head">退水(%)</div>
+
+                      <template v-for="row in section.rows" :key="`${section.gameId}-${row.label}`">
+                        <div class="member-info-cell member-info-play">{{ row.label }}</div>
+                        <div class="member-info-cell">{{ formatLimitValue(row.betLimit) }}</div>
+                        <div class="member-info-cell">{{ formatLimitValue(row.periodLimit) }}</div>
+                        <div class="member-info-cell">0.0%</div>
+                      </template>
+                    </div>
+                  </section>
+                </template>
+                <div v-else class="bets-empty">暂无个人资讯</div>
+              </div>
+            </template>
+
+            <template v-else>
+              <p v-if="memberBalanceLogsError" class="console-message is-error">{{ memberBalanceLogsError }}</p>
+              <p
+                v-else-if="memberBalanceLogsLoading && !memberBalanceLogRows.length"
+                class="console-message"
+              >
+                会员账本加载中...
+              </p>
+
+              <div v-if="!memberBalanceLogsError" class="member-info-card">
+                <div class="member-ledger-table">
+                  <div class="member-info-head">冲账额度</div>
+                  <div class="member-info-head">操作前额度</div>
+                  <div class="member-info-head">操作后额度</div>
+                  <div class="member-info-head">时间</div>
+
+                  <template v-if="memberBalanceLogRows.length">
+                    <template v-for="item in memberBalanceLogRows" :key="item.id">
+                      <div class="member-info-cell member-info-play">{{ formatSignedMoney(item.amountChange) }}</div>
+                      <div class="member-info-cell">{{ formatMoney(item.balanceBefore) }}</div>
+                      <div class="member-info-cell">{{ formatMoney(item.balanceAfter) }}</div>
+                      <div class="member-info-cell member-ledger-time-cell" :title="item.fullRemark || ''">
+                        {{ formatDateTime(item.createdAt) }}
+                      </div>
+                    </template>
+                  </template>
+                  <div v-else class="bets-empty">暂无会员账本</div>
+                </div>
+              </div>
+
+              <div
+                v-if="!memberBalanceLogsLoading && !memberBalanceLogsError"
+                class="bets-view-pagination bets-view-pagination-footer"
+              >
+                <button
+                  type="button"
+                  :disabled="memberBalanceLogsPage.page <= 0"
+                  @click="changeMemberBalanceLogsPage(memberBalanceLogsPage.page - 1)"
+                >
+                  上一页
+                </button>
+                <span>{{ (memberBalanceLogsPage.page || 0) + 1 }} / {{ memberBalanceLogsPage.totalPages || 1 }}</span>
+                <button
+                  type="button"
+                  :disabled="
+                    memberBalanceLogsPage.totalPages > 0 &&
+                    memberBalanceLogsPage.page >= memberBalanceLogsPage.totalPages - 1
+                  "
+                  @click="changeMemberBalanceLogsPage(memberBalanceLogsPage.page + 1)"
+                >
+                  下一页
+                </button>
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <section v-else-if="activeQuickAction === '游戏规则'" class="rules-view">
+          <div class="rules-shell">
+            <div class="rules-title-bar">游戏规则</div>
+
+            <div class="rules-tabs">
+              <button
+                v-for="section in gameRuleSections"
+                :key="section.id"
+                type="button"
+                class="rules-tab"
+                :class="{ active: selectedRuleSectionId === section.id }"
+                @click="selectedRuleSectionId = section.id"
+              >
+                {{ section.title }}
+              </button>
+            </div>
+
+            <div v-if="currentRuleSection" class="rules-content">
+              <section class="rules-block">
+                <h3>简介</h3>
+                <p>{{ currentRuleSection.intro }}</p>
+                <p>
+                  官网:
+                  <a :href="currentRuleSection.website" target="_blank" rel="noreferrer">
+                    {{ currentRuleSection.website }}
+                  </a>
+                </p>
+              </section>
+
+              <section class="rules-block">
+                <h3>游戏玩法</h3>
+                <ul class="rules-list">
+                  <li v-for="item in currentRuleSection.plays" :key="item">{{ item }}</li>
+                </ul>
+              </section>
+
+              <section
+                v-if="currentRuleSection.extraTitle && currentRuleSection.extras.length"
+                class="rules-block"
+              >
+                <h3>{{ currentRuleSection.extraTitle }}</h3>
+                <ul class="rules-list">
+                  <li v-for="item in currentRuleSection.extras" :key="item">{{ item }}</li>
+                </ul>
+              </section>
+            </div>
+          </div>
+        </section>
+
         <template v-else>
           <p v-if="dashboardError" class="console-message is-error">{{ dashboardError }}</p>
-          <p v-else-if="dashboardLoading" class="console-message">控制台数据加载中...</p>
           <component
-            v-else
+            v-if="games.length"
             :is="currentGamePageComponent"
             :games="games"
             :selected-game="selectedGame"
             :game-page="gamePage"
             :latest-draw-issue-label="latestDrawIssueLabel"
             :latest-draw-numbers="latestDrawNumbers"
+            :latest-draw-active-indices="latestDrawActiveIndices"
             :latest-draw-special="latestDrawSpecial"
             :latest-draw-result-id="displayWinResult?.id || 'draw'"
             :draw-results-error="drawResultsError"

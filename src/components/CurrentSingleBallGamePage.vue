@@ -6,6 +6,7 @@ const props = defineProps({
   gamePage: { type: Object, required: true },
   latestDrawIssueLabel: { type: String, default: '--' },
   latestDrawNumbers: { type: Array, default: () => [] },
+  latestDrawActiveIndices: { type: Array, default: () => [] },
   latestDrawSpecial: { type: [String, Number], default: '--' },
   latestDrawResultId: { type: [String, Number], default: 'draw' },
   drawResultsError: { type: String, default: '' },
@@ -102,7 +103,7 @@ const isPlaySelected = (playName) => {
         v-for="(num, index) in latestDrawNumbers"
         :key="`${latestDrawResultId}-${index}-${num}`"
         class="draw-ball"
-        :class="{ active: index === latestDrawNumbers.length - 1 }"
+        :class="{ active: latestDrawActiveIndices.includes(index) }"
       >
         {{ num }}
       </span>
