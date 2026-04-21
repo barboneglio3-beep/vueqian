@@ -62,6 +62,13 @@ const visibleTemaSidePlays = computed(() => {
   return props.showTemaSidePlays ? temaSidePlays : []
 })
 
+const hasVisibleDrawData = computed(() => {
+  return !(
+    props.latestDrawNumbers.length === 1 &&
+    props.latestDrawNumbers[0] === '加载中'
+  ) && props.latestDrawNumbers.length > 0
+})
+
 const isPlaySelected = (playName) => {
   return props.selectedBetPlays.includes(playName)
 }
@@ -113,9 +120,9 @@ const isPlaySelected = (playName) => {
   </div>
 
   <p v-if="drawResultsError" class="console-message is-error">{{ drawResultsError }}</p>
-  <p v-else-if="drawResultsLoading" class="console-message">开奖号码加载中...</p>
+  <p v-else-if="drawResultsLoading && !hasVisibleDrawData" class="console-message">开奖号码加载中...</p>
   <p v-if="winResultsError" class="console-message is-error">{{ winResultsError }}</p>
-  <p v-else-if="winResultsLoading" class="console-message">中奖结果加载中...</p>
+  <p v-else-if="winResultsLoading && !hasVisibleDrawData" class="console-message">中奖结果加载中...</p>
 
   <div class="issue-banner">
     <span class="issue-banner-playmode">

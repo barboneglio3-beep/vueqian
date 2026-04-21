@@ -234,6 +234,7 @@ const betsFilters = reactive({
   gameId: null,
   startAt: '',
   endAt: '',
+  status: '',
 })
 const betsPage = ref({
   total: 0,
@@ -304,11 +305,15 @@ let drawResultsRequestId = 0
 let betsRequestId = 0
 let issueResultsRequestId = 0
 let playSettingsRequestId = 0
+let winResultsLoadingRequestId = 0
+let drawResultsLoadingRequestId = 0
+let playSettingsLoadingRequestId = 0
 let memberInfoRequestId = 0
 let memberBalanceLogsRequestId = 0
 let globalLoadingShowTimer = null
 let globalLoadingHideTimer = null
 let globalLoadingShownAt = 0
+const playSettingsPrefetchingGameIds = new Set()
 
 const getAuthToken = () => loginResult.value?.token || ''
 
@@ -401,6 +406,7 @@ const currentBetSideType = computed(() => {
 const displayedBets = computed(() => bets.value)
 const displayedDailySummary = computed(() => dailySummary.value)
 const displayedDailySummaryGames = computed(() => dailySummaryGames.value)
+const gameViewCache = ref({})
 const memberDisplayName = computed(() => {
   return (
     currentUser.value?.nickname ||
@@ -622,6 +628,97 @@ const queueMemberInfoPrefetch = () => {
   }, 0)
 }
 
+const cacheGameViewData = (gameId, partial) => {
+  const normalizedGameId = Number(gameId || 0)
+  if (!normalizedGameId) {
+    return
+  }
+
+  gameViewCache.value = {
+    ...gameViewCache.value,
+    [normalizedGameId]: {
+      ...(gameViewCache.value[normalizedGameId] || {}),
+      ...partial,
+    },
+  }
+}
+
+const applyCachedGameViewData = (gameId) => {
+  const normalizedGameId = Number(gameId || 0)
+  const cached = gameViewCache.value[normalizedGameId]
+  if (!cached) {
+    return false
+  }
+
+  if (Array.isArray(cached.drawResults)) {
+    drawResults.value = cached.drawResults
+  }
+  if (Array.isArray(cached.winResults)) {
+    winResults.value = cached.winResults
+  }
+  if (Array.isArray(cached.playSettings)) {
+    playSettings.value = cached.playSettings
+  }
+  return true
+}
+
+const hasCachedPlaySettings = (gameId) => {
+  const normalizedGameId = Number(gameId || 0)
+  const cachedPlaySettings = gameViewCache.value[normalizedGameId]?.playSettings
+  return Array.isArray(cachedPlaySettings) && cachedPlaySettings.length > 0
+}
+
+const prefetchPlaySettingsForGame = async (gameId) => {
+  const normalizedGameId = Number(gameId || 0)
+  if (
+    !normalizedGameId ||
+    !getAuthToken() ||
+    hasCachedPlaySettings(normalizedGameId) ||
+    playSettingsPrefetchingGameIds.has(normalizedGameId)
+  ) {
+    return
+  }
+
+  playSettingsPrefetchingGameIds.add(normalizedGameId)
+
+  try {
+    const payload = await apiFetch(`/api/member/game-play-settings?gameId=${normalizedGameId}&page=0&size=50`)
+    const pageData = payload.data || payload
+    const settingsList =
+      pageData.records || pageData.content || pageData.list || pageData.items || []
+
+    cacheGameViewData(normalizedGameId, {
+      playSettings: Array.isArray(settingsList) ? settingsList : [],
+    })
+    saveDashboardCache()
+  } catch {
+    // Ignore background prefetch failures and fall back to on-demand loading.
+  } finally {
+    playSettingsPrefetchingGameIds.delete(normalizedGameId)
+  }
+}
+
+const queuePlaySettingsPrefetch = (excludeGameId = null) => {
+  window.setTimeout(async () => {
+    if (view.value !== 'dashboard' || !getAuthToken()) {
+      return
+    }
+
+    const excludedGameId = Number(excludeGameId || 0)
+    const gameIds = games.value
+      .map((item) => Number(item?.id || 0))
+      .filter((gameId) => gameId && gameId !== excludedGameId && !hasCachedPlaySettings(gameId))
+
+    for (const gameId of gameIds) {
+      if (view.value !== 'dashboard' || !getAuthToken()) {
+        return
+      }
+
+      await prefetchPlaySettingsForGame(gameId)
+    }
+  }, 0)
+}
+
 const saveDashboardCache = () => {
   if (!loginResult.value?.token) {
     return
@@ -637,6 +734,7 @@ const saveDashboardCache = () => {
     drawResults: drawResults.value,
     winResults: winResults.value,
     playSettings: playSettings.value,
+    gameViewCache: gameViewCache.value,
     memberInfoPlaySettings: memberInfoPlaySettings.value,
     memberBalanceLogs: memberBalanceLogs.value,
     memberBalanceLogsPage: memberBalanceLogsPage.value,
@@ -667,6 +765,9 @@ const restoreDashboardCache = () => {
   drawResults.value = Array.isArray(snapshot.drawResults) ? snapshot.drawResults : []
   winResults.value = Array.isArray(snapshot.winResults) ? snapshot.winResults : []
   playSettings.value = Array.isArray(snapshot.playSettings) ? snapshot.playSettings : []
+  gameViewCache.value = snapshot.gameViewCache && typeof snapshot.gameViewCache === 'object'
+    ? snapshot.gameViewCache
+    : {}
   memberInfoPlaySettings.value = Array.isArray(snapshot.memberInfoPlaySettings)
     ? snapshot.memberInfoPlaySettings
     : []
@@ -934,8 +1035,12 @@ const displayWinResult = computed(() => {
   return latestDrawResult.value
 })
 
+const hasLatestDrawDisplayData = computed(() => {
+  return Boolean(displayWinResult.value?.drawCode)
+})
+
 const isDrawDisplayLoading = computed(() => {
-  return drawResultsLoading.value || winResultsLoading.value
+  return (drawResultsLoading.value || winResultsLoading.value) && !hasLatestDrawDisplayData.value
 })
 
 const latestDrawNumbers = computed(() => {
@@ -1017,7 +1122,7 @@ const currentIssueStatusText = computed(() => {
     return '已封盘'
   }
 
-  return `距离开奖${countdownText.value}`
+  return `距离封盘${countdownText.value}`
 })
 
 const formatOdds = (value) => {
@@ -1537,11 +1642,15 @@ const loadDashboard = async (silent = false) => {
           selectedBall.value = supportedBalls[0]
         }
       }
+      applyCachedGameViewData(selectedGameId.value)
       startCountdown(selectedGame.value?.sealCountdownSeconds)
       saveDashboardCache()
+      const shouldSilentRefreshPlaySettings = hasCachedPlaySettings(selectedGameId.value)
       const detailTasks = [loadDrawResults(selectedGameId.value, silent), loadWinResults(selectedGameId.value, silent)]
       if (!silent || previousGameId !== selectedGameId.value || !playSettings.value.length) {
-        detailTasks.push(loadPlaySettings(selectedGameId.value, silent))
+        detailTasks.push(
+          loadPlaySettings(selectedGameId.value, silent || shouldSilentRefreshPlaySettings),
+        )
       }
 
       if (silent) {
@@ -1550,12 +1659,14 @@ const loadDashboard = async (silent = false) => {
           queueRecentBetsRefresh(selectedGameId.value, betsPage.value.page)
         }
         queueMemberInfoPrefetch()
+        queuePlaySettingsPrefetch(selectedGameId.value)
       } else {
         void Promise.all(detailTasks)
         if (activeQuickAction.value === '游戏投注') {
           queueRecentBetsRefresh(selectedGameId.value, 0)
         }
         queueMemberInfoPrefetch()
+        queuePlaySettingsPrefetch(selectedGameId.value)
       }
     } else {
       selectedGameId.value = null
@@ -1588,6 +1699,7 @@ const loadPlaySettings = async (gameId, silent = false) => {
   const requestId = ++playSettingsRequestId
 
   if (!silent) {
+    playSettingsLoadingRequestId = requestId
     playSettingsLoading.value = true
     playSettingsError.value = ''
   }
@@ -1603,6 +1715,7 @@ const loadPlaySettings = async (gameId, silent = false) => {
     }
 
     playSettings.value = Array.isArray(settingsList) ? settingsList : []
+    cacheGameViewData(gameId, { playSettings: playSettings.value })
     saveDashboardCache()
   } catch (error) {
     if (requestId !== playSettingsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
@@ -1615,7 +1728,11 @@ const loadPlaySettings = async (gameId, silent = false) => {
         error instanceof Error ? error.message : '玩法赔率加载失败'
     }
   } finally {
-    if (!silent && requestId === playSettingsRequestId && Number(selectedGameId.value) === Number(gameId)) {
+    if (
+      !silent &&
+      requestId === playSettingsLoadingRequestId &&
+      Number(selectedGameId.value) === Number(gameId)
+    ) {
       playSettingsLoading.value = false
     }
   }
@@ -1637,6 +1754,9 @@ const loadBets = async (gameId, page = 0, silent = false) => {
   }
   if (betsFilters.endAt) {
     query.set('endAt', betsFilters.endAt)
+  }
+  if (betsFilters.status) {
+    query.set('status', betsFilters.status)
   }
 
   if (gameId && !betsFilters.startAt && !betsFilters.endAt) {
@@ -1913,6 +2033,7 @@ const loadWinResults = async (gameId, silent = false) => {
   })
 
   if (!silent) {
+    winResultsLoadingRequestId = requestId
     winResultsLoading.value = true
     winResultsError.value = ''
   }
@@ -1928,6 +2049,7 @@ const loadWinResults = async (gameId, silent = false) => {
     }
 
     winResults.value = Array.isArray(resultList) ? resultList : []
+    cacheGameViewData(gameId, { winResults: winResults.value })
     saveDashboardCache()
   } catch (error) {
     if (requestId !== winResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
@@ -1940,7 +2062,11 @@ const loadWinResults = async (gameId, silent = false) => {
         error instanceof Error ? error.message : '中奖结果加载失败'
     }
   } finally {
-    if (!silent && requestId === winResultsRequestId && Number(selectedGameId.value) === Number(gameId)) {
+    if (
+      !silent &&
+      requestId === winResultsLoadingRequestId &&
+      Number(selectedGameId.value) === Number(gameId)
+    ) {
       winResultsLoading.value = false
     }
   }
@@ -1956,6 +2082,7 @@ const loadDrawResults = async (gameId, silent = false) => {
   const requestId = ++drawResultsRequestId
 
   if (!silent) {
+    drawResultsLoadingRequestId = requestId
     drawResultsLoading.value = true
     drawResultsError.value = ''
   }
@@ -1987,6 +2114,7 @@ const loadDrawResults = async (gameId, silent = false) => {
           return compareIssueNo(b.issueNo, a.issueNo)
         })
       : []
+    cacheGameViewData(gameId, { drawResults: drawResults.value })
     saveDashboardCache()
   } catch (error) {
     if (requestId !== drawResultsRequestId || Number(selectedGameId.value) !== Number(gameId)) {
@@ -1999,7 +2127,11 @@ const loadDrawResults = async (gameId, silent = false) => {
         error instanceof Error ? error.message : '开奖历史加载失败'
     }
   } finally {
-    if (!silent && requestId === drawResultsRequestId && Number(selectedGameId.value) === Number(gameId)) {
+    if (
+      !silent &&
+      requestId === drawResultsLoadingRequestId &&
+      Number(selectedGameId.value) === Number(gameId)
+    ) {
       drawResultsLoading.value = false
     }
   }
@@ -2198,6 +2330,9 @@ const selectQuickAction = async (action) => {
   activeQuickAction.value = action
   if (action === '下注明细') {
     resetBetsFilters()
+    betsFilters.status = '未结算'
+    bets.value = []
+    betsError.value = ''
     await loadBets(selectedGameId.value, 0, false)
     return
   }
@@ -2234,12 +2369,14 @@ const selectQuickAction = async (action) => {
 
   if (action === '游戏投注' && selectedGameId.value) {
     resetBetsFilters()
+    const shouldSilentRefreshPlaySettings = hasCachedPlaySettings(selectedGameId.value)
     await Promise.all([
       loadDrawResults(selectedGameId.value, false),
       loadWinResults(selectedGameId.value, false),
-      loadPlaySettings(selectedGameId.value, false),
+      loadPlaySettings(selectedGameId.value, shouldSilentRefreshPlaySettings),
     ])
     queueRecentBetsRefresh(selectedGameId.value, 0)
+    queuePlaySettingsPrefetch(selectedGameId.value)
   }
 }
 
@@ -2276,14 +2413,15 @@ const selectGame = async (gameId) => {
   selectedBetPlay.value = ''
   betSlipItems.value = []
   batchBetAmount.value = ''
-  drawResults.value = []
   drawResultsError.value = ''
-  drawResultsLoading.value = false
-  winResults.value = []
   winResultsError.value = ''
-  winResultsLoading.value = false
+  playSettingsError.value = ''
+  applyCachedGameViewData(gameId)
+  const shouldSilentRefreshPlaySettings = hasCachedPlaySettings(gameId)
 
   if (activeQuickAction.value === '下注明细') {
+    bets.value = []
+    betsError.value = ''
     await loadBets(gameId, 0, false)
     return
   }
@@ -2313,9 +2451,10 @@ const selectGame = async (gameId) => {
   await Promise.all([
     loadDrawResults(gameId, false),
     loadWinResults(gameId, false),
-    loadPlaySettings(gameId, false),
+    loadPlaySettings(gameId, shouldSilentRefreshPlaySettings),
   ])
   queueRecentBetsRefresh(gameId, 0)
+  queuePlaySettingsPrefetch(gameId)
 }
 
 const changeBetsPage = async (nextPage) => {
@@ -2344,6 +2483,7 @@ const resetBetsFilters = () => {
   betsFilters.gameId = null
   betsFilters.startAt = ''
   betsFilters.endAt = ''
+  betsFilters.status = ''
 }
 
 const openBetsFromDailySummaryGame = async (item) => {
@@ -2356,6 +2496,7 @@ const openBetsFromDailySummaryGame = async (item) => {
   betsFilters.gameId = targetGameId
   betsFilters.startAt = `${dailySummarySelectedDate.value}T00:00:00`
   betsFilters.endAt = `${dailySummarySelectedDate.value}T23:59:59`
+  betsFilters.status = ''
   activeQuickAction.value = '下注明细'
   await loadBets(null, 0, false)
 }
