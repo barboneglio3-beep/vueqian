@@ -29,9 +29,6 @@ const agreementItems = [
   '14.会员账号余额只做参考不做交收依据,一律以报表为准。',
 ]
 
-const noticeText =
-  '公告：会员控制台已接入当前用户信息与游戏分页列表接口，赔率格与走势表暂以展示布局为主。'
-
 const quickActions = ['游戏投注', '下注明细', '期数结果', '账户历史', '个人资讯', '游戏规则']
 const gameRuleSections = [
   {
@@ -137,8 +134,8 @@ const tongPlayNames = [
   '13二通',
   '12三通',
   '12四通',
-  '24二通',
-  '14一通',
+  '24一通',
+  '14二通',
   '14三通',
   '13四通',
   '34一通',
@@ -227,6 +224,7 @@ const betSubmitError = ref('')
 const betSubmitMessage = ref('')
 const betSubmitting = ref(false)
 const activeQuickAction = ref('游戏投注')
+const announcements = ref([])
 const bets = ref([])
 const betsLoading = ref(false)
 const betsError = ref('')
@@ -300,6 +298,7 @@ const countdownSeconds = ref(0)
 
 let countdownTimer = null
 let dashboardPollTimer = null
+let clockTimer = null
 let winResultsRequestId = 0
 let drawResultsRequestId = 0
 let betsRequestId = 0
@@ -363,6 +362,21 @@ const formatDateInputValue = (value) => {
   return `${year}-${month}-${day}`
 }
 
+const formatAnnouncementCurrentTime = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '--'
+  }
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${year}年${month}月${day}日 ${hours}:${minutes}:${seconds}`
+}
+
 const displayName = computed(() => {
   const name =
     currentUser.value?.username ||
@@ -406,6 +420,14 @@ const currentBetSideType = computed(() => {
 const displayedBets = computed(() => bets.value)
 const displayedDailySummary = computed(() => dailySummary.value)
 const displayedDailySummaryGames = computed(() => dailySummaryGames.value)
+const currentAnnouncementTime = ref(formatAnnouncementCurrentTime())
+const announcementText = computed(() => {
+  const texts = announcements.value
+    .map((item) => String(item?.content || '').trim())
+    .filter(Boolean)
+
+  return texts.length ? texts.join('   ｜   ') : '暂无公告'
+})
 const gameViewCache = ref({})
 const memberDisplayName = computed(() => {
   return (
@@ -728,6 +750,7 @@ const saveDashboardCache = () => {
     userId: loginResult.value.userId ?? null,
     currentUser: currentUser.value,
     games: games.value,
+    announcements: announcements.value,
     gamePage: gamePage.value,
     selectedGameId: selectedGameId.value,
     selectedBall: selectedBall.value,
@@ -757,6 +780,7 @@ const restoreDashboardCache = () => {
 
   currentUser.value = snapshot.currentUser || null
   games.value = Array.isArray(snapshot.games) ? snapshot.games : []
+  announcements.value = Array.isArray(snapshot.announcements) ? snapshot.announcements : []
   gamePage.value = snapshot.gamePage || gamePage.value
   selectedGameId.value =
     snapshot.selectedGameId && snapshot.games?.some((item) => item.id === snapshot.selectedGameId)
@@ -1548,6 +1572,77 @@ const currentGamePageComponent = computed(() => {
   return gameComponentMap[gameId] || Game1Page
 })
 
+const startAnnouncementClock = () => {
+  window.clearInterval(clockTimer)
+  currentAnnouncementTime.value = formatAnnouncementCurrentTime()
+  clockTimer = window.setInterval(() => {
+    currentAnnouncementTime.value = formatAnnouncementCurrentTime()
+  }, 1000)
+}
+
+const redirectToLogin = (message = '登录已失效，请重新登录') => {
+  window.clearInterval(countdownTimer)
+  window.clearInterval(dashboardPollTimer)
+  window.clearInterval(clockTimer)
+  dashboardPollTimer = null
+  clockTimer = null
+  window.clearTimeout(globalLoadingShowTimer)
+  window.clearTimeout(globalLoadingHideTimer)
+  globalLoadingShowTimer = null
+  globalLoadingHideTimer = null
+  visibleGlobalLoadingText.value = ''
+  globalLoadingShownAt = 0
+
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(AGREEMENT_KEY)
+  localStorage.removeItem(DASHBOARD_CACHE_KEY)
+
+  loginResult.value = null
+  currentUser.value = null
+  games.value = []
+  announcements.value = []
+  drawResults.value = []
+  drawResultsLoading.value = false
+  drawResultsError.value = ''
+  winResults.value = []
+  winResultsLoading.value = false
+  winResultsError.value = ''
+  playSettings.value = []
+  playSettingsLoading.value = false
+  playSettingsError.value = ''
+  bets.value = []
+  betsLoading.value = false
+  betsError.value = ''
+  dailySummary.value = []
+  dailySummaryLoading.value = false
+  dailySummaryError.value = ''
+  dailySummaryGames.value = []
+  dailySummaryGamesLoading.value = false
+  dailySummaryGamesError.value = ''
+  issueResults.value = []
+  issueResultsLoading.value = false
+  issueResultsError.value = ''
+  memberInfoPlaySettings.value = []
+  memberInfoLoading.value = false
+  memberInfoError.value = ''
+  memberBalanceLogs.value = []
+  memberBalanceLogsLoading.value = false
+  memberBalanceLogsError.value = ''
+  dashboardLoading.value = false
+  dashboardError.value = ''
+  manualRefreshLoading.value = false
+  backgroundRefreshing.value = false
+  betSlipItems.value = []
+  selectedBetPlay.value = ''
+  batchBetAmount.value = ''
+  betSubmitError.value = ''
+  betSubmitMessage.value = ''
+  betSubmitting.value = false
+  successMessage.value = ''
+  errorMessage.value = message
+  view.value = 'login'
+}
+
 const apiFetch = async (url, options = {}) => {
   const headers = new Headers(options.headers || {})
   if (!headers.has('Content-Type') && options.body) {
@@ -1565,15 +1660,58 @@ const apiFetch = async (url, options = {}) => {
   })
 
   const payload = await response.json().catch(() => ({}))
+  const payloadMessage = getPayloadMessage(payload)
+  const shouldRedirectToLogin =
+    url !== '/api/member/login' &&
+    Boolean(token) &&
+    (response.status === 401 ||
+      response.status === 403 ||
+      /未登录|登录失效|重新登录|token|unauthorized|forbidden/i.test(payloadMessage))
+
+  if (shouldRedirectToLogin) {
+    redirectToLogin(payloadMessage || '登录已失效，请重新登录')
+    throw new Error(payloadMessage || '登录已失效，请重新登录')
+  }
+
   if (
     !response.ok ||
     payload.success === false ||
     (payload?.data && typeof payload.data === 'object' && payload.data.success === false)
   ) {
-    throw new Error(getPayloadMessage(payload))
+    throw new Error(payloadMessage)
   }
 
   return payload
+}
+
+const loadAnnouncements = async () => {
+  if (!getAuthToken()) {
+    announcements.value = []
+    return
+  }
+
+  try {
+    const payload = await apiFetch('/api/member/platform-announcements')
+    const list = payload.data || payload.list || []
+    announcements.value = Array.isArray(list)
+      ? [...list]
+          .filter((item) => Number(item?.announcementSide || 0) === 2)
+          .sort((left, right) => {
+            const sortLeft = Number(left?.sortOrder)
+            const sortRight = Number(right?.sortOrder)
+            if (sortLeft !== sortRight) {
+              return (Number.isFinite(sortLeft) ? sortLeft : 0) - (Number.isFinite(sortRight) ? sortRight : 0)
+            }
+
+            const timeLeft = new Date(left?.updatedAt || left?.createdAt || 0).getTime()
+            const timeRight = new Date(right?.updatedAt || right?.createdAt || 0).getTime()
+            return timeRight - timeLeft
+          })
+      : []
+    saveDashboardCache()
+  } catch {
+    // Keep cached announcements when the notice request fails.
+  }
 }
 
 const startCountdown = (seconds) => {
@@ -1607,9 +1745,10 @@ const loadDashboard = async (silent = false) => {
   backgroundRefreshing.value = silent
 
   try {
-    const [currentPayload, gamesPayload] = await Promise.all([
+    const [currentPayload, gamesPayload, announcementsPayload] = await Promise.all([
       apiFetch('/api/member/current'),
       apiFetch('/api/member/games?page=0&size=12'),
+      apiFetch('/api/member/platform-announcements').catch(() => null),
     ])
 
     currentUser.value = currentPayload.data || null
@@ -1622,6 +1761,23 @@ const loadDashboard = async (silent = false) => {
     const pageData = gamesPayload.data || gamesPayload
     const gameList =
       pageData.records || pageData.content || pageData.list || pageData.items || []
+
+    const announcementList = announcementsPayload?.data || announcementsPayload?.list || []
+    announcements.value = Array.isArray(announcementList)
+      ? [...announcementList]
+          .filter((item) => Number(item?.announcementSide || 0) === 2)
+          .sort((left, right) => {
+            const sortLeft = Number(left?.sortOrder)
+            const sortRight = Number(right?.sortOrder)
+            if (sortLeft !== sortRight) {
+              return (Number.isFinite(sortLeft) ? sortLeft : 0) - (Number.isFinite(sortRight) ? sortRight : 0)
+            }
+
+            const timeLeft = new Date(left?.updatedAt || left?.createdAt || 0).getTime()
+            const timeRight = new Date(right?.updatedAt || right?.createdAt || 0).getTime()
+            return timeRight - timeLeft
+          })
+      : announcements.value
 
     games.value = Array.isArray(gameList) ? gameList : []
     gamePage.value = {
@@ -2185,6 +2341,7 @@ const refreshActiveView = async () => {
     return
   }
 
+  void loadAnnouncements()
   await loadDashboard(true)
 }
 
@@ -2497,6 +2654,8 @@ const openBetsFromDailySummaryGame = async (item) => {
   betsFilters.startAt = `${dailySummarySelectedDate.value}T00:00:00`
   betsFilters.endAt = `${dailySummarySelectedDate.value}T23:59:59`
   betsFilters.status = ''
+  bets.value = []
+  betsError.value = ''
   activeQuickAction.value = '下注明细'
   await loadBets(null, 0, false)
 }
@@ -2698,6 +2857,7 @@ const submitBet = async () => {
 
 const logout = () => {
   window.clearInterval(countdownTimer)
+  window.clearInterval(clockTimer)
   stopAutoRefresh()
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(AGREEMENT_KEY)
@@ -2714,6 +2874,7 @@ const logout = () => {
 }
 
 onMounted(async () => {
+  startAnnouncementClock()
   if (loginResult.value && localStorage.getItem(AGREEMENT_KEY) === '1') {
     view.value = 'dashboard'
     activeQuickAction.value = '游戏投注'
@@ -2726,6 +2887,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.clearInterval(countdownTimer)
+  window.clearInterval(clockTimer)
   stopAutoRefresh()
   clearGlobalLoadingTimers()
 })
@@ -2817,8 +2979,17 @@ onBeforeUnmount(() => {
     </header>
 
     <section class="console-announcement">
-      <strong>公告：</strong>
-      <span>{{ noticeText }}</span>
+      <strong class="console-announcement-label">公告：</strong>
+      <div class="console-announcement-track">
+        <div class="console-announcement-marquee">
+          <span>{{ announcementText }}</span>
+          <span aria-hidden="true">{{ announcementText }}</span>
+        </div>
+      </div>
+      <div class="console-announcement-time">
+        <span>当前时间:</span>
+        <strong>{{ currentAnnouncementTime }}</strong>
+      </div>
     </section>
 
     <section class="console-layout">

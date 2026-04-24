@@ -310,12 +310,66 @@ input {
 .console-announcement {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  background: #2a2924;
-  color: #f0cf7a;
+  gap: 10px;
+  padding: 2px 8px;
+  min-height: 22px;
+  background: linear-gradient(180deg, #10161a 0%, #050809 100%);
+  color: #dbc171;
   font-size: 12px;
+  border-top: 1px solid #6f5a21;
   border-bottom: 1px solid #111;
+}
+
+.console-announcement-label {
+  flex: 0 0 auto;
+  color: #f0be48;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.console-announcement-track {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.console-announcement-marquee {
+  display: inline-flex;
+  align-items: center;
+  gap: 88px;
+  padding-left: 100%;
+  animation: console-announcement-scroll 38s linear infinite;
+}
+
+.console-announcement-marquee span {
+  flex: 0 0 auto;
+  color: #e7d6a3;
+}
+
+.console-announcement-time {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #d4b76c;
+  white-space: nowrap;
+}
+
+.console-announcement-time strong {
+  color: #f1d48a;
+  font-weight: 400;
+}
+
+@keyframes console-announcement-scroll {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-100%);
+  }
 }
 
 .console-layout {
@@ -1127,14 +1181,6 @@ input {
 .game-tab.active {
   background: #163e42;
   color: #f4bc35;
-}
-
-.games-meta {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: #5b5b5b;
-  white-space: nowrap;
 }
 
 .console-message {

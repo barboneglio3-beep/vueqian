@@ -46,8 +46,8 @@ const tongPlayNames = [
   '13二通',
   '12三通',
   '12四通',
-  '24二通',
-  '14一通',
+  '24一通',
+  '14二通',
   '14三通',
   '13四通',
   '34一通',
@@ -87,10 +87,6 @@ const isPlaySelected = (playName) => {
       >
         {{ game.id === selectedGame?.id ? pageTitle : game.gameName }}
       </button>
-    </div>
-    <div class="games-meta">
-      <span>第 {{ (gamePage.page || 0) + 1 }} / {{ gamePage.totalPages || 1 }} 页</span>
-      <span>{{ gamePage.total }} 个游戏</span>
     </div>
   </div>
 
