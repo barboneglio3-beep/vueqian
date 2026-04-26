@@ -299,6 +299,9 @@ const countdownSeconds = ref(0)
 let countdownTimer = null
 let dashboardPollTimer = null
 let clockTimer = null
+let autoRefreshInProgress = false
+let autoRefreshTickCount = 0
+let lastDefaultAutoRefreshAt = 0
 let winResultsRequestId = 0
 let drawResultsRequestId = 0
 let betsRequestId = 0
@@ -828,6 +831,9 @@ const queueRecentBetsRefresh = (gameId, page = 0) => {
 
 const GLOBAL_LOADING_DELAY_MS = 280
 const GLOBAL_LOADING_MIN_VISIBLE_MS = 420
+const GAME_BETTING_REFRESH_INTERVAL_MS = 2000
+const DEFAULT_AUTO_REFRESH_INTERVAL_MS = 5000
+const DASHBOARD_SHELL_REFRESH_EVERY = 5
 const visibleGlobalLoadingText = ref('')
 const globalLoadingText = computed(() => {
   if (dashboardLoading.value && !games.value.length) {
@@ -1586,6 +1592,9 @@ const redirectToLogin = (message = '登录已失效，请重新登录') => {
   window.clearInterval(clockTimer)
   dashboardPollTimer = null
   clockTimer = null
+  autoRefreshInProgress = false
+  autoRefreshTickCount = 0
+  lastDefaultAutoRefreshAt = 0
   window.clearTimeout(globalLoadingShowTimer)
   window.clearTimeout(globalLoadingHideTimer)
   globalLoadingShowTimer = null
@@ -1731,7 +1740,7 @@ const startCountdown = (seconds) => {
   }, 1000)
 }
 
-const loadDashboard = async (silent = false) => {
+const loadDashboard = async (silent = false, refreshDetails = true) => {
   if (!getAuthToken()) {
     dashboardError.value = '缺少登录令牌，请重新登录'
     return
@@ -1798,15 +1807,17 @@ const loadDashboard = async (silent = false) => {
           selectedBall.value = supportedBalls[0]
         }
       }
-      applyCachedGameViewData(selectedGameId.value)
+      if (!silent) {
+        applyCachedGameViewData(selectedGameId.value)
+      }
       startCountdown(selectedGame.value?.sealCountdownSeconds)
       saveDashboardCache()
       const shouldSilentRefreshPlaySettings = hasCachedPlaySettings(selectedGameId.value)
-      const detailTasks = [loadDrawResults(selectedGameId.value, silent), loadWinResults(selectedGameId.value, silent)]
-      if (!silent || previousGameId !== selectedGameId.value || !playSettings.value.length) {
-        detailTasks.push(
-          loadPlaySettings(selectedGameId.value, silent || shouldSilentRefreshPlaySettings),
-        )
+      const detailTasks = refreshDetails
+        ? [loadDrawResults(selectedGameId.value, silent), loadWinResults(selectedGameId.value, silent)]
+        : []
+      if (refreshDetails && (!silent || previousGameId !== selectedGameId.value || !playSettings.value.length)) {
+        detailTasks.push(loadPlaySettings(selectedGameId.value, silent || shouldSilentRefreshPlaySettings))
       }
 
       if (silent) {
@@ -2299,11 +2310,26 @@ const stopAutoRefresh = () => {
 }
 
 const refreshActiveView = async () => {
-  if (activeQuickAction.value === '下注明细') {
+  if (activeQuickAction.value === '游戏投注') {
     if (!selectedGameId.value) {
       return
     }
-    await loadBets(selectedGameId.value, betsPage.value.page, true)
+
+    const refreshGameId = selectedGameId.value
+    await Promise.all([
+      loadDrawResults(refreshGameId, true),
+      loadWinResults(refreshGameId, true),
+    ])
+
+    autoRefreshTickCount += 1
+    if (autoRefreshTickCount % DASHBOARD_SHELL_REFRESH_EVERY === 0) {
+      void loadAnnouncements()
+      void loadDashboard(true, false)
+    }
+    return
+  }
+
+  if (activeQuickAction.value === '下注明细') {
     return
   }
 
@@ -2316,11 +2342,6 @@ const refreshActiveView = async () => {
   }
 
   if (activeQuickAction.value === '账户历史') {
-    if (dailySummarySelectedDate.value) {
-      await loadDailySummaryGames(dailySummarySelectedDate.value, true)
-      return
-    }
-    await loadDailySummary(null, dailySummaryPage.value.page, true)
     return
   }
 
@@ -2347,14 +2368,35 @@ const refreshActiveView = async () => {
 
 const startAutoRefresh = () => {
   stopAutoRefresh()
+  autoRefreshInProgress = false
+  autoRefreshTickCount = 0
+  lastDefaultAutoRefreshAt = 0
 
   dashboardPollTimer = window.setInterval(async () => {
-    if (view.value !== 'dashboard' || !selectedGameId.value || dashboardLoading.value) {
+    if (
+      view.value !== 'dashboard' ||
+      !selectedGameId.value ||
+      dashboardLoading.value ||
+      autoRefreshInProgress
+    ) {
       return
     }
 
-    await refreshActiveView()
-  }, 5000)
+    if (activeQuickAction.value !== '游戏投注') {
+      const now = Date.now()
+      if (now - lastDefaultAutoRefreshAt < DEFAULT_AUTO_REFRESH_INTERVAL_MS) {
+        return
+      }
+      lastDefaultAutoRefreshAt = now
+    }
+
+    autoRefreshInProgress = true
+    try {
+      await refreshActiveView()
+    } finally {
+      autoRefreshInProgress = false
+    }
+  }, GAME_BETTING_REFRESH_INTERVAL_MS)
 }
 
 const handleSubmit = async () => {
@@ -2858,6 +2900,9 @@ const submitBet = async () => {
 const logout = () => {
   window.clearInterval(countdownTimer)
   window.clearInterval(clockTimer)
+  autoRefreshInProgress = false
+  autoRefreshTickCount = 0
+  lastDefaultAutoRefreshAt = 0
   stopAutoRefresh()
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(AGREEMENT_KEY)
@@ -2888,6 +2933,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.clearInterval(countdownTimer)
   window.clearInterval(clockTimer)
+  autoRefreshInProgress = false
+  autoRefreshTickCount = 0
+  lastDefaultAutoRefreshAt = 0
   stopAutoRefresh()
   clearGlobalLoadingTimers()
 })
