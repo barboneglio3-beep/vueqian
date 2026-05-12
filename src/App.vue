@@ -11,6 +11,7 @@ import Game7Page from './components/Game7Page.vue'
 const STORAGE_KEY = 'member-login-session'
 const AGREEMENT_KEY = 'member-agreement-accepted'
 const DASHBOARD_CACHE_KEY = 'member-dashboard-cache'
+const NAV_SEARCH_REDIRECT_URL = 'https://www.bsrq8f.xyz'
 
 const agreementItems = [
   '01.为避免出现争议，请您务必在下注之后查看“下注状况”。',
@@ -318,6 +319,10 @@ let globalLoadingShownAt = 0
 const playSettingsPrefetchingGameIds = new Set()
 
 const getAuthToken = () => loginResult.value?.token || ''
+
+const getUrlQueryValue = (key) => new URLSearchParams(window.location.search).get(key)?.trim() || ''
+const getNavSearchCode = () => getUrlQueryValue('navSearchCode')
+const getNavLoginEntryId = () => getUrlQueryValue('navLoginEntryId')
 
 const compareIssueNo = (left, right) => {
   const leftText = String(left || '').trim()
@@ -2411,11 +2416,15 @@ const handleSubmit = async () => {
   loading.value = true
 
   try {
+    const navSearchCode = getNavSearchCode()
+    const navLoginEntryId = getNavLoginEntryId()
     const data = await apiFetch('/api/member/login', {
       method: 'POST',
       body: JSON.stringify({
         username: form.username.trim(),
         password: form.password,
+        ...(navSearchCode ? { navSearchCode } : {}),
+        ...(navLoginEntryId ? { navLoginEntryId } : {}),
       }),
       headers: {
         'Content-Type': 'application/json',
@@ -2435,7 +2444,12 @@ const handleSubmit = async () => {
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '登录失败，请稍后重试'
+    const message = error instanceof Error ? error.message : '登录失败，请稍后重试'
+    if (/导航搜索码.*(无效|停用)|导航页入口|navSearchCode|navLoginEntryId/i.test(message)) {
+      window.location.replace(NAV_SEARCH_REDIRECT_URL)
+      return
+    }
+    errorMessage.value = message
   } finally {
     loading.value = false
   }
@@ -2919,6 +2933,11 @@ const logout = () => {
 }
 
 onMounted(async () => {
+  if (!getNavSearchCode()) {
+    window.location.replace(NAV_SEARCH_REDIRECT_URL)
+    return
+  }
+
   startAnnouncementClock()
   if (loginResult.value && localStorage.getItem(AGREEMENT_KEY) === '1') {
     view.value = 'dashboard'
