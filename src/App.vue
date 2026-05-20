@@ -171,6 +171,11 @@ const form = reactive({
   password: '',
 })
 
+const systemConfig = ref({
+  systemName: '联想',
+  memberSiteTitle: '会员登录',
+})
+
 const normalizeLoginSession = (payload) => {
   const source = payload?.data && typeof payload.data === 'object' ? payload.data : payload
   if (!source || typeof source !== 'object') {
@@ -195,6 +200,15 @@ const getPayloadMessage = (payload, fallback = '接口请求失败') => {
     return payload.data.message
   }
   return payload?.message || fallback
+}
+
+const formatLoginTitleText = (value) => {
+  const text = String(value || '').trim()
+  if (!text) {
+    return ''
+  }
+
+  return /^[\u4e00-\u9fa5]+$/.test(text) ? text.split('').join(' ') : text
 }
 
 const view = ref('login')
@@ -323,6 +337,15 @@ const getAuthToken = () => loginResult.value?.token || ''
 const getUrlQueryValue = (key) => new URLSearchParams(window.location.search).get(key)?.trim() || ''
 const getNavSearchCode = () => getUrlQueryValue('navSearchCode')
 const getNavLoginEntryId = () => getUrlQueryValue('navLoginEntryId')
+
+const systemNameText = computed(() => systemConfig.value.systemName || '联想')
+const systemNameChars = computed(() => {
+  const text = String(systemNameText.value || '').trim()
+  return text ? [...text] : ['联', '想']
+})
+const memberSiteTitleText = computed(() => {
+  return formatLoginTitleText(systemConfig.value.memberSiteTitle || '会员登录')
+})
 
 const compareIssueNo = (left, right) => {
   const leftText = String(left || '').trim()
@@ -1698,6 +1721,23 @@ const apiFetch = async (url, options = {}) => {
   return payload
 }
 
+const loadSystemConfigs = async () => {
+  try {
+    const payload = await apiFetch('/api/member/public/system-configs')
+    const configs = payload?.data?.configs || payload?.configs || {}
+    const systemName = String(configs.system_name || '').trim()
+    const memberSiteTitle = String(configs.member_site_title || '').trim()
+
+    systemConfig.value = {
+      systemName: systemName || systemConfig.value.systemName,
+      memberSiteTitle: memberSiteTitle || systemConfig.value.memberSiteTitle,
+    }
+    document.title = `${systemConfig.value.systemName} · ${systemConfig.value.memberSiteTitle}`
+  } catch {
+    document.title = `${systemConfig.value.systemName} · ${systemConfig.value.memberSiteTitle}`
+  }
+}
+
 const loadAnnouncements = async () => {
   if (!getAuthToken()) {
     announcements.value = []
@@ -2938,6 +2978,7 @@ onMounted(async () => {
     return
   }
 
+  await loadSystemConfigs()
   startAnnouncementClock()
   if (loginResult.value && localStorage.getItem(AGREEMENT_KEY) === '1') {
     view.value = 'dashboard'
@@ -2964,8 +3005,7 @@ onBeforeUnmount(() => {
   <main v-if="view === 'login'" class="login-page">
     <section class="login-shell">
       <aside class="brand-panel" aria-label="品牌名称">
-        <span>联</span>
-        <span>想</span>
+        <span v-for="(char, index) in systemNameChars" :key="`${char}-${index}`">{{ char }}</span>
       </aside>
 
       <section class="form-panel">
@@ -2976,7 +3016,7 @@ onBeforeUnmount(() => {
         </div>
 
         <form class="member-form" @submit.prevent="handleSubmit">
-          <h1>会 员 登 录</h1>
+          <h1>{{ memberSiteTitleText }}</h1>
 
           <label class="form-row">
             <span>账 号:</span>
