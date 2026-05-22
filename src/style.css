@@ -338,9 +338,8 @@ input {
 .console-announcement-marquee {
   display: inline-flex;
   align-items: center;
-  gap: 88px;
   padding-left: 100%;
-  animation: console-announcement-scroll 38s linear infinite;
+  animation: console-announcement-scroll 18s linear 1;
 }
 
 .console-announcement-marquee span {
@@ -1050,6 +1049,10 @@ input {
   width: 24px;
   height: 24px;
   font-size: 13px;
+}
+
+.issue-result-ball.is-issue-active {
+  font-weight: 700;
 }
 
 .issue-results-result-cell {

@@ -393,6 +393,54 @@ const formatDateInputValue = (value) => {
   return `${year}-${month}-${day}`
 }
 
+const formatDateTimeInputValue = (value) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`
+}
+
+const getBusinessDayRange = (value = new Date()) => {
+  const baseDate = value instanceof Date ? new Date(value) : new Date(value)
+  if (Number.isNaN(baseDate.getTime())) {
+    return { startAt: '', endAt: '' }
+  }
+
+  const businessDate = new Date(baseDate)
+  if (businessDate.getHours() < 6) {
+    businessDate.setDate(businessDate.getDate() - 1)
+  }
+
+  const startAt = new Date(businessDate)
+  startAt.setHours(6, 0, 0, 0)
+
+  const endAt = new Date(startAt)
+  endAt.setDate(startAt.getDate() + 1)
+  endAt.setHours(5, 59, 59, 0)
+
+  return {
+    startAt: formatDateTimeInputValue(startAt),
+    endAt: formatDateTimeInputValue(endAt),
+  }
+}
+
+const getBusinessDayRangeByDate = (dateText) => {
+  const text = String(dateText || '').trim()
+  if (!text) {
+    return { startAt: '', endAt: '' }
+  }
+
+  return getBusinessDayRange(`${text}T06:00:00`)
+}
+
 const formatAnnouncementCurrentTime = (value = new Date()) => {
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) {
@@ -452,12 +500,16 @@ const displayedBets = computed(() => bets.value)
 const displayedDailySummary = computed(() => dailySummary.value)
 const displayedDailySummaryGames = computed(() => dailySummaryGames.value)
 const currentAnnouncementTime = ref(formatAnnouncementCurrentTime())
-const announcementText = computed(() => {
-  const texts = announcements.value
+const currentAnnouncementIndex = ref(0)
+const announcementTexts = computed(() => {
+  return announcements.value
     .map((item) => String(item?.content || '').trim())
     .filter(Boolean)
+})
+const announcementText = computed(() => {
+  const texts = announcementTexts.value
 
-  return texts.length ? texts.join('   ｜   ') : '暂无公告'
+  return texts.length ? texts[currentAnnouncementIndex.value % texts.length] : '暂无公告'
 })
 const gameViewCache = ref({})
 const memberDisplayName = computed(() => {
@@ -928,6 +980,16 @@ watch(
   { immediate: true },
 )
 
+watch(
+  announcementTexts,
+  (texts) => {
+    if (!texts.length || currentAnnouncementIndex.value >= texts.length) {
+      currentAnnouncementIndex.value = 0
+    }
+  },
+  { immediate: true },
+)
+
 const betsPageTotals = computed(() => {
   return displayedBets.value.reduce(
     (accumulator, item) => {
@@ -1151,6 +1213,69 @@ const getHighlightedResultIndices = (gameId, numbers, ballIndex) => {
 
   const rawBallIndex = Number(ballIndex)
   return Number.isFinite(rawBallIndex) && rawBallIndex > 0 ? [rawBallIndex - 1] : []
+}
+
+const getGameDefaultHighlightIndices = (gameId, numbers) => {
+  const numberCount = Array.isArray(numbers) ? numbers.length : 0
+  if (!numberCount) {
+    return []
+  }
+
+  const normalizedGameId = Number(gameId || 0)
+  if (gamesWithoutBallSelector.includes(normalizedGameId)) {
+    return [Math.max(0, numberCount - 2), numberCount - 1]
+  }
+
+  const supportedBalls = gameBallConfig[normalizedGameId] || []
+  if (supportedBalls.length) {
+    return supportedBalls
+      .map((ball) => Number(ball) - 1)
+      .filter((index) => index >= 0 && index < numberCount)
+  }
+
+  return [numberCount - 1]
+}
+
+const getIssueResultHighlightIndices = (item, numbers) => {
+  const gameId = Number(item?.gameId || selectedGameId.value || 0)
+  if (gamesWithoutBallSelector.includes(gameId)) {
+    return getGameDefaultHighlightIndices(gameId, numbers)
+  }
+
+  const rawBallIndex = Number(item?.ballIndex)
+  if (Number.isFinite(rawBallIndex) && rawBallIndex > 0) {
+    return getHighlightedResultIndices(gameId, numbers, rawBallIndex)
+  }
+
+  return getGameDefaultHighlightIndices(gameId, numbers)
+}
+
+const getIssueResultBallsClass = (item, numbers) => {
+  const gameId = Number(item?.gameId || selectedGameId.value || 0)
+  const highlightCount = getIssueResultHighlightIndices(item, numbers).length
+  return [
+    'draw-balls',
+    'issue-results-balls',
+    `issue-results-balls--game-${gameId || 'unknown'}`,
+    {
+      'issue-results-balls--single': highlightCount === 1,
+      'issue-results-balls--multi': highlightCount > 1,
+    },
+  ]
+}
+
+const getIssueResultBallClass = (item, numbers, index) => {
+  const gameId = Number(item?.gameId || selectedGameId.value || 0)
+  const highlightIndices = getIssueResultHighlightIndices(item, numbers)
+  return [
+    'draw-ball',
+    'issue-result-ball',
+    `issue-result-ball--game-${gameId || 'unknown'}`,
+    {
+      active: highlightIndices.includes(index),
+      'is-issue-active': highlightIndices.includes(index),
+    },
+  ]
 }
 
 const latestDrawSpecial = computed(() => {
@@ -1614,6 +1739,16 @@ const startAnnouncementClock = () => {
   }, 1000)
 }
 
+const showNextAnnouncement = () => {
+  const total = announcementTexts.value.length
+  if (total <= 1) {
+    currentAnnouncementIndex.value = 0
+    return
+  }
+
+  currentAnnouncementIndex.value = (currentAnnouncementIndex.value + 1) % total
+}
+
 const redirectToLogin = (message = '登录已失效，请重新登录') => {
   window.clearInterval(countdownTimer)
   window.clearInterval(dashboardPollTimer)
@@ -1952,6 +2087,12 @@ const loadPlaySettings = async (gameId, silent = false) => {
 
 const loadBets = async (gameId, page = 0, silent = false) => {
   const requestId = ++betsRequestId
+  if (!betsFilters.startAt && !betsFilters.endAt) {
+    const businessDayRange = getBusinessDayRange()
+    betsFilters.startAt = businessDayRange.startAt
+    betsFilters.endAt = businessDayRange.endAt
+  }
+
   const query = new URLSearchParams({
     page: String(page),
     size: String(betsPage.value.size),
@@ -2733,9 +2874,10 @@ const changeDailySummaryPage = async (nextPage) => {
 }
 
 const resetBetsFilters = () => {
+  const businessDayRange = getBusinessDayRange()
   betsFilters.gameId = null
-  betsFilters.startAt = ''
-  betsFilters.endAt = ''
+  betsFilters.startAt = businessDayRange.startAt
+  betsFilters.endAt = businessDayRange.endAt
   betsFilters.status = ''
 }
 
@@ -2745,10 +2887,11 @@ const openBetsFromDailySummaryGame = async (item) => {
     return
   }
 
+  const businessDayRange = getBusinessDayRangeByDate(dailySummarySelectedDate.value)
   selectedGameId.value = targetGameId
   betsFilters.gameId = targetGameId
-  betsFilters.startAt = `${dailySummarySelectedDate.value}T00:00:00`
-  betsFilters.endAt = `${dailySummarySelectedDate.value}T23:59:59`
+  betsFilters.startAt = businessDayRange.startAt
+  betsFilters.endAt = businessDayRange.endAt
   betsFilters.status = ''
   bets.value = []
   betsError.value = ''
@@ -3079,7 +3222,7 @@ onBeforeUnmount(() => {
 
   <main v-else class="console-page">
     <header class="console-topbar">
-      <div class="console-brand">麒麟盛世</div>
+      <div class="console-brand">{{ systemNameText }}</div>
       <div v-if="visibleGlobalLoadingText" class="console-global-loading">
         {{ visibleGlobalLoadingText }}
       </div>
@@ -3088,9 +3231,12 @@ onBeforeUnmount(() => {
     <section class="console-announcement">
       <strong class="console-announcement-label">公告：</strong>
       <div class="console-announcement-track">
-        <div class="console-announcement-marquee">
+        <div
+          :key="`${currentAnnouncementIndex}-${announcementText}`"
+          class="console-announcement-marquee"
+          @animationend="showNextAnnouncement"
+        >
           <span>{{ announcementText }}</span>
-          <span aria-hidden="true">{{ announcementText }}</span>
         </div>
       </div>
       <div class="console-announcement-time">
@@ -3424,21 +3570,11 @@ onBeforeUnmount(() => {
                   <div class="bets-cell">{{ item.issueNo || '--' }}</div>
                   <div class="bets-cell">{{ formatDateTime(item.drawTime) }}</div>
                   <div class="bets-cell issue-results-code-cell">
-                    <div class="draw-balls issue-results-balls">
+                    <div :class="getIssueResultBallsClass(item, parseDrawCodeNumbers(item.drawCode))">
                       <span
                         v-for="(ball, index) in parseDrawCodeNumbers(item.drawCode)"
                         :key="`${item.issueNo || 'issue'}-${index}`"
-                        :class="[
-                          'draw-ball',
-                          'issue-result-ball',
-                          {
-                            active: getHighlightedResultIndices(
-                              item.gameId || selectedGameId,
-                              parseDrawCodeNumbers(item.drawCode),
-                              item.ballIndex,
-                            ).includes(index),
-                          },
-                        ]"
+                        :class="getIssueResultBallClass(item, parseDrawCodeNumbers(item.drawCode), index)"
                       >
                         {{ ball }}
                       </span>
