@@ -786,6 +786,20 @@ input {
   color: #2f5fb8;
 }
 
+.rules-html {
+  line-height: 1.9;
+}
+
+.rules-html p {
+  margin: 0 0 8px;
+}
+
+.rules-html ul,
+.rules-html ol {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
 .rules-list {
   margin: 0;
   padding-left: 18px;

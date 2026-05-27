@@ -260,7 +260,8 @@ const issueResultsLoading = ref(false)
 const issueResultsError = ref('')
 const issueResultsFilters = reactive({
   issueNo: '',
-  drawDate: '',
+  startDate: '',
+  endDate: '',
 })
 const issueResultsPage = ref({
   total: 0,
@@ -286,7 +287,11 @@ const dailySummaryFilters = reactive({
   endDate: '',
 })
 const memberInfoTab = ref('profile')
-const selectedRuleSectionId = ref(gameRuleSections[0]?.id || '')
+const selectedRulesGameId = ref(null)
+const selectedRuleSectionId = ref('')
+const gameRules = ref(null)
+const gameRulesLoading = ref(false)
+const gameRulesError = ref('')
 const memberInfoPlaySettings = ref([])
 const memberInfoLoading = ref(false)
 const memberInfoError = ref('')
@@ -322,6 +327,7 @@ let drawResultsRequestId = 0
 let betsRequestId = 0
 let issueResultsRequestId = 0
 let playSettingsRequestId = 0
+let gameRulesRequestId = 0
 let winResultsLoadingRequestId = 0
 let drawResultsLoadingRequestId = 0
 let playSettingsLoadingRequestId = 0
@@ -439,6 +445,38 @@ const getBusinessDayRangeByDate = (dateText) => {
   }
 
   return getBusinessDayRange(`${text}T06:00:00`)
+}
+
+const getBusinessDate = (value = new Date()) => {
+  const date = value instanceof Date ? new Date(value) : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return new Date()
+  }
+
+  if (date.getHours() < 6) {
+    date.setDate(date.getDate() - 1)
+  }
+  date.setHours(12, 0, 0, 0)
+  return date
+}
+
+const addDays = (value, days) => {
+  const date = value instanceof Date ? new Date(value) : new Date(value)
+  date.setDate(date.getDate() + days)
+  return date
+}
+
+const getWeekDateRange = (value = new Date(), weekOffset = 0) => {
+  const date = getBusinessDate(value)
+  const currentDay = date.getDay()
+  const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay
+  const monday = addDays(date, mondayOffset + weekOffset * 7)
+  const sunday = addDays(monday, 6)
+
+  return {
+    startDate: formatDateInputValue(monday),
+    endDate: formatDateInputValue(sunday),
+  }
 }
 
 const formatAnnouncementCurrentTime = (value = new Date()) => {
@@ -606,10 +644,24 @@ const formatSignedMoney = (value) => {
   return formatted
 }
 
+const currentRuleSections = computed(() => {
+  const sections = Array.isArray(gameRules.value?.sections) ? gameRules.value.sections : []
+  return [...sections]
+    .filter((item) => Number(item?.enabled ?? 1) === 1)
+    .sort((left, right) => {
+      const sortLeft = Number(left?.sortOrder)
+      const sortRight = Number(right?.sortOrder)
+      if (sortLeft !== sortRight) {
+        return (Number.isFinite(sortLeft) ? sortLeft : 0) - (Number.isFinite(sortRight) ? sortRight : 0)
+      }
+      return Number(left?.id || 0) - Number(right?.id || 0)
+    })
+})
+
 const currentRuleSection = computed(() => {
   return (
-    gameRuleSections.find((item) => item.id === selectedRuleSectionId.value) ||
-    gameRuleSections[0] ||
+    currentRuleSections.value.find((item) => String(item.id) === String(selectedRuleSectionId.value)) ||
+    currentRuleSections.value[0] ||
     null
   )
 })
@@ -1794,6 +1846,11 @@ const redirectToLogin = (message = '登录已失效，请重新登录') => {
   issueResults.value = []
   issueResultsLoading.value = false
   issueResultsError.value = ''
+  gameRules.value = null
+  gameRulesLoading.value = false
+  gameRulesError.value = ''
+  selectedRulesGameId.value = null
+  selectedRuleSectionId.value = ''
   memberInfoPlaySettings.value = []
   memberInfoLoading.value = false
   memberInfoError.value = ''
@@ -2323,6 +2380,7 @@ const loadIssueResults = async (gameId, page = 0, silent = false) => {
     return
   }
 
+  ensureIssueResultsDefaultFilters()
   const requestId = ++issueResultsRequestId
   const query = new URLSearchParams({
     gameId: String(gameId),
@@ -2332,6 +2390,12 @@ const loadIssueResults = async (gameId, page = 0, silent = false) => {
 
   if (issueResultsFilters.issueNo.trim()) {
     query.set('issueNo', issueResultsFilters.issueNo.trim())
+  }
+  if (issueResultsFilters.startDate) {
+    query.set('startDate', issueResultsFilters.startDate)
+  }
+  if (issueResultsFilters.endDate) {
+    query.set('endDate', issueResultsFilters.endDate)
   }
 
   if (!silent) {
@@ -2366,6 +2430,63 @@ const loadIssueResults = async (gameId, page = 0, silent = false) => {
   } finally {
     if (!silent && requestId === issueResultsRequestId && Number(selectedGameId.value) === Number(gameId)) {
       issueResultsLoading.value = false
+    }
+  }
+}
+
+const loadGameRules = async (gameId, silent = false) => {
+  const normalizedGameId = Number(gameId || 0)
+  if (!normalizedGameId) {
+    gameRules.value = null
+    gameRulesError.value = ''
+    selectedRuleSectionId.value = ''
+    return
+  }
+
+  const requestId = ++gameRulesRequestId
+  selectedRulesGameId.value = normalizedGameId
+
+  if (!silent) {
+    gameRulesLoading.value = true
+    gameRulesError.value = ''
+  }
+
+  try {
+    const payload = await apiFetch(`/api/member/game-rules?gameId=${normalizedGameId}`)
+    if (requestId !== gameRulesRequestId || Number(selectedRulesGameId.value) !== normalizedGameId) {
+      return
+    }
+
+    const nextRules = payload.data || payload
+    gameRules.value = nextRules || null
+
+    const sections = Array.isArray(nextRules?.sections)
+      ? [...nextRules.sections]
+          .filter((item) => Number(item?.enabled ?? 1) === 1)
+          .sort((left, right) => {
+            const sortLeft = Number(left?.sortOrder)
+            const sortRight = Number(right?.sortOrder)
+            if (sortLeft !== sortRight) {
+              return (Number.isFinite(sortLeft) ? sortLeft : 0) - (Number.isFinite(sortRight) ? sortRight : 0)
+            }
+            return Number(left?.id || 0) - Number(right?.id || 0)
+          })
+      : []
+
+    selectedRuleSectionId.value = sections[0]?.id || ''
+  } catch (error) {
+    if (requestId !== gameRulesRequestId || Number(selectedRulesGameId.value) !== normalizedGameId) {
+      return
+    }
+
+    if (!silent) {
+      gameRules.value = null
+      selectedRuleSectionId.value = ''
+      gameRulesError.value = error instanceof Error ? error.message : '游戏规则加载失败'
+    }
+  } finally {
+    if (!silent && requestId === gameRulesRequestId && Number(selectedRulesGameId.value) === normalizedGameId) {
+      gameRulesLoading.value = false
     }
   }
 }
@@ -2679,12 +2800,56 @@ const changeMemberBalanceLogsPage = async (nextPage) => {
 }
 
 const applyIssueResultsFilters = async () => {
+  issueResults.value = []
+  issueResultsError.value = ''
   await loadIssueResults(selectedGameId.value, 0, false)
+}
+
+const setIssueResultsDateRange = async (startDate, endDate) => {
+  issueResultsFilters.startDate = startDate
+  issueResultsFilters.endDate = endDate
+  issueResults.value = []
+  issueResultsError.value = ''
+  await loadIssueResults(selectedGameId.value, 0, false)
+}
+
+const ensureIssueResultsDefaultFilters = () => {
+  if (issueResultsFilters.startDate && issueResultsFilters.endDate) {
+    return
+  }
+
+  const today = formatDateInputValue(getBusinessDate())
+  issueResultsFilters.startDate = today
+  issueResultsFilters.endDate = today
+}
+
+const setIssueResultsToday = async () => {
+  const today = formatDateInputValue(getBusinessDate())
+  await setIssueResultsDateRange(today, today)
+}
+
+const setIssueResultsYesterday = async () => {
+  const yesterday = formatDateInputValue(addDays(getBusinessDate(), -1))
+  await setIssueResultsDateRange(yesterday, yesterday)
+}
+
+const setIssueResultsThisWeek = async () => {
+  const range = getWeekDateRange(new Date(), 0)
+  await setIssueResultsDateRange(range.startDate, range.endDate)
+}
+
+const setIssueResultsLastWeek = async () => {
+  const range = getWeekDateRange(new Date(), -1)
+  await setIssueResultsDateRange(range.startDate, range.endDate)
 }
 
 const resetIssueResultsFilters = async () => {
   issueResultsFilters.issueNo = ''
-  issueResultsFilters.drawDate = ''
+  issueResultsFilters.startDate = ''
+  issueResultsFilters.endDate = ''
+  ensureIssueResultsDefaultFilters()
+  issueResults.value = []
+  issueResultsError.value = ''
   await loadIssueResults(selectedGameId.value, 0, false)
 }
 
@@ -2706,6 +2871,15 @@ const handleIssueResultsGameChange = async (value) => {
   }
 
   await selectGame(nextGameId)
+}
+
+const selectRulesGame = async (gameId) => {
+  const nextGameId = Number(gameId || 0) || null
+  if (!nextGameId || Number(selectedRulesGameId.value) === nextGameId) {
+    return
+  }
+
+  await loadGameRules(nextGameId, false)
 }
 
 const openGameBetting = async () => {
@@ -2758,6 +2932,12 @@ const selectQuickAction = async (action) => {
       return
     }
     await loadMemberInfo(false)
+    return
+  }
+
+  if (action === '游戏规则') {
+    const targetGameId = selectedRulesGameId.value || selectedGameId.value || games.value[0]?.id || null
+    await loadGameRules(targetGameId, false)
     return
   }
 
@@ -3536,10 +3716,19 @@ onBeforeUnmount(() => {
               />
             </label>
             <label class="issue-results-toolbar-field">
-              <span>时间:</span>
-              <input v-model="issueResultsFilters.drawDate" type="date" />
+              <span>开始:</span>
+              <input v-model="issueResultsFilters.startDate" type="date" @change="applyIssueResultsFilters" />
+            </label>
+            <label class="issue-results-toolbar-field">
+              <span>结束:</span>
+              <input v-model="issueResultsFilters.endDate" type="date" @change="applyIssueResultsFilters" />
             </label>
             <button type="button" class="issue-results-toolbar-button" @click="applyIssueResultsFilters">搜索</button>
+            <button type="button" class="issue-results-toolbar-button" @click="setIssueResultsToday">今日</button>
+            <button type="button" class="issue-results-toolbar-button" @click="setIssueResultsYesterday">昨日</button>
+            <button type="button" class="issue-results-toolbar-button" @click="setIssueResultsThisWeek">本星期</button>
+            <button type="button" class="issue-results-toolbar-button" @click="setIssueResultsLastWeek">上星期</button>
+            <button type="button" class="issue-results-toolbar-button" @click="resetIssueResultsFilters">重置</button>
             <button type="button" class="issue-results-toolbar-button" @click="openGameBetting">返回投注页面</button>
           </div>
 
@@ -4017,50 +4206,35 @@ onBeforeUnmount(() => {
 
         <section v-else-if="activeQuickAction === '游戏规则'" class="rules-view">
           <div class="rules-shell">
-            <div class="rules-title-bar">游戏规则</div>
+            <div class="rules-title-bar">{{ gameRules?.gameName || '游戏规则' }}</div>
 
             <div class="rules-tabs">
               <button
-                v-for="section in gameRuleSections"
-                :key="section.id"
+                v-for="game in games"
+                :key="game.id"
                 type="button"
                 class="rules-tab"
-                :class="{ active: selectedRuleSectionId === section.id }"
-                @click="selectedRuleSectionId = section.id"
+                :class="{ active: Number(selectedRulesGameId) === Number(game.id) }"
+                @click="selectRulesGame(game.id)"
               >
-                {{ section.title }}
+                {{ game.gameName }}
               </button>
             </div>
 
-            <div v-if="currentRuleSection" class="rules-content">
-              <section class="rules-block">
-                <h3>简介</h3>
-                <p>{{ currentRuleSection.intro }}</p>
-                <p>
-                  官网:
-                  <a :href="currentRuleSection.website" target="_blank" rel="noreferrer">
-                    {{ currentRuleSection.website }}
-                  </a>
-                </p>
-              </section>
+            <p v-if="gameRulesError" class="console-message is-error">{{ gameRulesError }}</p>
+            <p v-else-if="gameRulesLoading && !currentRuleSections.length" class="console-message">游戏规则加载中...</p>
 
-              <section class="rules-block">
-                <h3>游戏玩法</h3>
-                <ul class="rules-list">
-                  <li v-for="item in currentRuleSection.plays" :key="item">{{ item }}</li>
-                </ul>
-              </section>
+            <template v-if="!gameRulesError">
+              <div v-if="currentRuleSection" class="rules-content">
+                <section class="rules-block">
+                  <div class="rules-html" v-html="currentRuleSection.content || ''"></div>
+                </section>
+              </div>
 
-              <section
-                v-if="currentRuleSection.extraTitle && currentRuleSection.extras.length"
-                class="rules-block"
-              >
-                <h3>{{ currentRuleSection.extraTitle }}</h3>
-                <ul class="rules-list">
-                  <li v-for="item in currentRuleSection.extras" :key="item">{{ item }}</li>
-                </ul>
-              </section>
-            </div>
+              <div v-else-if="!gameRulesLoading" class="rules-content">
+                暂无游戏规则
+              </div>
+            </template>
           </div>
         </section>
 
