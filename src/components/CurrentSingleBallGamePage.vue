@@ -76,6 +76,22 @@ const isPlaySelected = (playName) => {
 
 <template>
   <div class="games-toolbar">
+    <label class="mobile-game-select">
+      <span>选择游戏</span>
+      <select
+        :value="selectedGame?.id || ''"
+        @change="emit('select-game', Number($event.target.value))"
+      >
+        <option
+          v-for="game in games"
+          :key="game.id"
+          :value="game.id"
+        >
+          {{ game.id === selectedGame?.id ? pageTitle : game.gameName }}
+        </option>
+      </select>
+    </label>
+
     <div class="game-tabs">
       <button
         v-for="game in games"

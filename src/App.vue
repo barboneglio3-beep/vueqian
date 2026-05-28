@@ -11,6 +11,7 @@ import Game7Page from './components/Game7Page.vue'
 const STORAGE_KEY = 'member-login-session'
 const AGREEMENT_KEY = 'member-agreement-accepted'
 const DASHBOARD_CACHE_KEY = 'member-dashboard-cache'
+const ACTIVE_QUICK_ACTION_KEY = 'member-active-quick-action'
 const NAV_SEARCH_REDIRECT_URL = 'https://www.bsrq8f.xyz'
 
 const agreementItems = [
@@ -31,6 +32,7 @@ const agreementItems = [
 ]
 
 const quickActions = ['游戏投注', '下注明细', '期数结果', '账户历史', '个人资讯', '游戏规则']
+const mobileMenuActions = ['个人资讯', '游戏大厅', '游戏投注', '下注明细', '期数结果', '账户历史', '游戏规则']
 const gameRuleSections = [
   {
     id: 'australia-fantan',
@@ -166,6 +168,19 @@ const readDashboardCache = () => {
   }
 }
 
+const readStoredActiveQuickAction = () => {
+  try {
+    const action = localStorage.getItem(ACTIVE_QUICK_ACTION_KEY)
+    const validActions = new Set([...quickActions, ...mobileMenuActions])
+    if (action === '游戏大厅' && !window.matchMedia('(max-width: 768px)').matches) {
+      return '游戏投注'
+    }
+    return validActions.has(action) ? action : '游戏投注'
+  } catch {
+    return '游戏投注'
+  }
+}
+
 const form = reactive({
   username: '',
   password: '',
@@ -211,11 +226,28 @@ const formatLoginTitleText = (value) => {
   return /^[\u4e00-\u9fa5]+$/.test(text) ? text.split('').join(' ') : text
 }
 
-const view = ref('login')
+const getInitialView = (session) => {
+  if (!session) {
+    return 'login'
+  }
+
+  try {
+    return localStorage.getItem(AGREEMENT_KEY) === '1' ? 'dashboard' : 'agreement'
+  } catch {
+    return 'login'
+  }
+}
+
+const initialLoginResult = readStoredSession()
+const view = ref(getInitialView(initialLoginResult))
 const loading = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
-const loginResult = ref(readStoredSession())
+const loginResult = ref(initialLoginResult)
+const mobileLobbyOpen = ref(false)
+const mobileBetSlipCollapsed = ref(false)
+const mobileMenuOpen = ref(false)
+const isMobileViewport = ref(window.matchMedia('(max-width: 768px)').matches)
 
 const dashboardLoading = ref(false)
 const dashboardError = ref('')
@@ -238,7 +270,7 @@ const betSlipItems = ref([])
 const betSubmitError = ref('')
 const betSubmitMessage = ref('')
 const betSubmitting = ref(false)
-const activeQuickAction = ref('游戏投注')
+const activeQuickAction = ref(readStoredActiveQuickAction())
 const announcements = ref([])
 const bets = ref([])
 const betsLoading = ref(false)
@@ -1042,6 +1074,14 @@ watch(
   { immediate: true },
 )
 
+watch(activeQuickAction, (action) => {
+  try {
+    localStorage.setItem(ACTIVE_QUICK_ACTION_KEY, action)
+  } catch {
+    // Ignore storage errors; navigation still works for the current session.
+  }
+})
+
 const betsPageTotals = computed(() => {
   return displayedBets.value.reduce(
     (accumulator, item) => {
@@ -1559,6 +1599,7 @@ const betTotalAmount = computed(() => {
   return formatMoney(total)
 })
 const batchBetAmount = ref('')
+const quickBetAmounts = [10, 100, 500, 5000]
 const betSubmitButtonText = computed(() => `${currentPlayModeLabel.value || '确认'}下注`)
 
 const getCornerTokens = (playName) => {
@@ -1820,6 +1861,7 @@ const redirectToLogin = (message = '登录已失效，请重新登录') => {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(AGREEMENT_KEY)
   localStorage.removeItem(DASHBOARD_CACHE_KEY)
+  localStorage.removeItem(ACTIVE_QUICK_ACTION_KEY)
 
   loginResult.value = null
   currentUser.value = null
@@ -2617,6 +2659,12 @@ const stopAutoRefresh = () => {
 }
 
 const refreshActiveView = async () => {
+  if (activeQuickAction.value === '游戏大厅') {
+    void loadAnnouncements()
+    await loadDashboard(true, false)
+    return
+  }
+
   if (activeQuickAction.value === '游戏投注') {
     if (!selectedGameId.value) {
       return
@@ -2894,8 +2942,40 @@ const openGameBetting = async () => {
   }
 }
 
+const openMobileGame = async (gameId) => {
+  mobileLobbyOpen.value = false
+  activeQuickAction.value = '游戏投注'
+  await selectGame(gameId)
+}
+
+const openMobileQuickAction = async (action) => {
+  mobileLobbyOpen.value = false
+  await selectQuickAction(action)
+}
+
+const openMobileLobby = () => {
+  mobileLobbyOpen.value = true
+  activeQuickAction.value = '游戏大厅'
+}
+
+const selectMobileMenuAction = async (action) => {
+  mobileMenuOpen.value = false
+  if (action === '游戏大厅') {
+    openMobileLobby()
+    return
+  }
+  mobileLobbyOpen.value = false
+  await selectQuickAction(action)
+}
+
 const selectQuickAction = async (action) => {
   activeQuickAction.value = action
+  if (action === '游戏大厅') {
+    mobileLobbyOpen.value = true
+    return
+  }
+
+  mobileLobbyOpen.value = false
   if (action === '下注明细') {
     resetBetsFilters()
     betsFilters.status = '未结算'
@@ -3253,6 +3333,7 @@ const submitBet = async () => {
             : { ballIndex: selectedBall.value }),
           selectionValue,
           betAmount: Number(formatMoney(betAmount)),
+          clientType: isMobileViewport.value ? 'H5' : 'PC',
         }),
       })
     }
@@ -3274,6 +3355,14 @@ const submitBet = async () => {
   }
 }
 
+const syncMobileViewport = () => {
+  isMobileViewport.value = window.matchMedia('(max-width: 768px)').matches
+  if (!isMobileViewport.value && activeQuickAction.value === '游戏大厅') {
+    activeQuickAction.value = '游戏投注'
+    mobileLobbyOpen.value = false
+  }
+}
+
 const logout = () => {
   window.clearInterval(countdownTimer)
   window.clearInterval(clockTimer)
@@ -3284,6 +3373,7 @@ const logout = () => {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(AGREEMENT_KEY)
   localStorage.removeItem(DASHBOARD_CACHE_KEY)
+  localStorage.removeItem(ACTIVE_QUICK_ACTION_KEY)
   form.username = ''
   form.password = ''
   loginResult.value = null
@@ -3296,6 +3386,9 @@ const logout = () => {
 }
 
 onMounted(async () => {
+  syncMobileViewport()
+  window.addEventListener('resize', syncMobileViewport)
+
   if (!getNavSearchCode()) {
     window.location.replace(NAV_SEARCH_REDIRECT_URL)
     return
@@ -3305,15 +3398,21 @@ onMounted(async () => {
   startAnnouncementClock()
   if (loginResult.value && localStorage.getItem(AGREEMENT_KEY) === '1') {
     view.value = 'dashboard'
-    activeQuickAction.value = '游戏投注'
+    const restoredAction = readStoredActiveQuickAction()
+    activeQuickAction.value = restoredAction
+    mobileLobbyOpen.value = restoredAction === '游戏大厅'
     restoreDashboardCache()
     await loadDashboard()
+    if (restoredAction !== '游戏投注' && restoredAction !== '游戏大厅') {
+      await selectQuickAction(restoredAction)
+    }
     queueMemberInfoPrefetch()
     startAutoRefresh()
   }
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncMobileViewport)
   window.clearInterval(countdownTimer)
   window.clearInterval(clockTimer)
   autoRefreshInProgress = false
@@ -3326,6 +3425,10 @@ onBeforeUnmount(() => {
 
 <template>
   <main v-if="view === 'login'" class="login-page">
+    <section class="login-mobile-hero" aria-label="移动端欢迎横幅">
+      <div class="login-mobile-title">{{ systemNameText }}欢迎您</div>
+    </section>
+
     <section class="login-shell">
       <aside class="brand-panel" aria-label="品牌名称">
         <span v-for="(char, index) in systemNameChars" :key="`${char}-${index}`">{{ char }}</span>
@@ -3343,7 +3446,7 @@ onBeforeUnmount(() => {
 
           <label class="form-row">
             <span>账 号:</span>
-            <input v-model="form.username" type="text" autocomplete="username" />
+            <input v-model="form.username" type="text" autocomplete="username" placeholder="请输入您的账号" />
           </label>
 
           <label class="form-row">
@@ -3352,6 +3455,7 @@ onBeforeUnmount(() => {
               v-model="form.password"
               type="password"
               autocomplete="current-password"
+              placeholder="请输入您的密码"
             />
           </label>
 
@@ -3402,11 +3506,57 @@ onBeforeUnmount(() => {
 
   <main v-else class="console-page">
     <header class="console-topbar">
+      <button
+        type="button"
+        class="mobile-menu-trigger"
+        aria-label="打开手机菜单"
+        @click="mobileMenuOpen = !mobileMenuOpen"
+      >
+        ☰
+      </button>
       <div class="console-brand">{{ systemNameText }}</div>
       <div v-if="visibleGlobalLoadingText" class="console-global-loading">
         {{ visibleGlobalLoadingText }}
       </div>
+      <button
+        v-if="activeQuickAction !== '游戏大厅'"
+        type="button"
+        class="mobile-top-home-button"
+        aria-label="返回手机首页"
+        @click="openMobileLobby"
+      >
+        ⌂
+      </button>
     </header>
+
+    <button
+      v-if="mobileMenuOpen"
+      type="button"
+      class="mobile-menu-mask"
+      aria-label="关闭手机菜单"
+      @click="mobileMenuOpen = false"
+    ></button>
+
+    <aside v-if="mobileMenuOpen" class="mobile-menu-panel">
+      <button type="button" class="mobile-menu-close" aria-label="关闭手机菜单" @click="mobileMenuOpen = false">
+        ☰
+      </button>
+      <div class="mobile-menu-brand">{{ systemNameText }}</div>
+      <div class="mobile-menu-user">{{ currentUser?.username || displayName }}</div>
+      <nav class="mobile-menu-list">
+        <button
+          v-for="action in mobileMenuActions"
+          :key="action"
+          type="button"
+          :class="{ active: activeQuickAction === action }"
+          @click="selectMobileMenuAction(action)"
+        >
+          <span></span>
+          <strong>{{ action }}</strong>
+        </button>
+      </nav>
+      <button type="button" class="mobile-menu-logout" @click="logout">安全退出</button>
+    </aside>
 
     <section class="console-announcement">
       <strong class="console-announcement-label">公告：</strong>
@@ -3425,7 +3575,80 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="console-layout">
+    <section v-if="isMobileViewport && activeQuickAction === '游戏大厅'" class="mobile-lobby">
+      <header class="mobile-lobby-header">
+        <strong>游戏大厅</strong>
+      </header>
+
+      <nav class="mobile-lobby-actions" aria-label="快捷入口">
+        <button type="button" @click="openMobileQuickAction('个人资讯')">
+          <span class="mobile-lobby-action-icon">▣</span>
+          <strong>信用资料</strong>
+        </button>
+        <button type="button" @click="openMobileQuickAction('下注明细')">
+          <span class="mobile-lobby-action-icon">▤</span>
+          <strong>下注明细</strong>
+        </button>
+        <button type="button" @click="openMobileQuickAction('期数结果')">
+          <span class="mobile-lobby-action-icon">▥</span>
+          <strong>结果报表</strong>
+        </button>
+      </nav>
+
+      <section class="mobile-game-list">
+        <button
+          v-for="(game, index) in games"
+          :key="game.id"
+          type="button"
+          class="mobile-game-card"
+          @click="openMobileGame(game.id)"
+        >
+          <span class="mobile-game-logo" :class="`mobile-game-logo-${(index % 4) + 1}`">
+            <span class="mobile-game-logo-text">{{ String(game.gameName || '游戏').slice(0, 4) }}</span>
+            <span class="mobile-game-logo-main">{{ String(game.gameName || '').includes('28') ? '28' : '8' }}</span>
+          </span>
+          <span class="mobile-game-info">
+            <strong>{{ game.gameName }}</strong>
+            <small>{{ game.currentIssueNo ? `第${game.currentIssueNo}期` : '欢迎游戏' }}</small>
+            <small>{{ game.currentDrawTime ? `开奖时间：${formatDateTime(game.currentDrawTime)}` : '点击进入' }}</small>
+          </span>
+          <span class="mobile-game-arrow">›</span>
+        </button>
+      </section>
+    </section>
+
+    <section v-if="activeQuickAction !== '游戏大厅'" class="mobile-play-header">
+      <button type="button" @click="openMobileLobby">‹</button>
+      <strong>{{ activeQuickAction === '游戏投注' ? currentGamePageTitle : activeQuickAction }}</strong>
+    </section>
+
+    <section v-if="activeQuickAction === '游戏投注' && !mobileLobbyOpen" class="mobile-account-strip">
+      <div>
+        <span>账号</span>
+        <strong>{{ currentUser?.username || displayName }}</strong>
+      </div>
+      <div>
+        <span>快彩额度</span>
+        <strong>{{ currentUser?.balance ?? '--' }}</strong>
+      </div>
+      <div>
+        <span>今日输赢</span>
+        <strong>{{ formatMoney(currentUser?.todayResultAmount) }}</strong>
+      </div>
+      <div>
+        <span>未结算</span>
+        <strong>{{ formatMoney(currentUser?.unsettledOrderAmount) }}</strong>
+      </div>
+    </section>
+
+    <section
+      class="console-layout"
+      :class="{
+        'is-mobile-lobby-active': isMobileViewport && activeQuickAction === '游戏大厅',
+        'is-game-betting-active': activeQuickAction === '游戏投注',
+        'is-mobile-bet-slip-collapsed': mobileBetSlipCollapsed,
+      }"
+    >
       <aside class="console-sidebar">
         <div class="user-panel">
           <div class="user-row">
@@ -3521,6 +3744,20 @@ onBeforeUnmount(() => {
               />
             </div>
 
+            <div class="bet-slip-cell bet-slip-label">快捷：</div>
+            <div class="bet-slip-cell bet-slip-span-3">
+              <div class="quick-amount-buttons">
+                <button
+                  v-for="amount in quickBetAmounts"
+                  :key="amount"
+                  type="button"
+                  @click="updateBatchBetAmount(String(amount))"
+                >
+                  {{ amount }}
+                </button>
+              </div>
+            </div>
+
             <div class="bet-slip-cell bet-slip-summary">笔数：{{ betCount }}</div>
             <div class="bet-slip-cell bet-slip-summary bet-slip-span-3">总额：{{ betTotalAmount }}</div>
 
@@ -3596,7 +3833,7 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="console-main">
-        <section v-if="activeQuickAction === '下注明细'" class="bets-view">
+        <section v-if="activeQuickAction === '下注明细'" class="bets-view bets-detail-view">
           <div class="bets-view-header">
             <h2>下注明细</h2>
           </div>
@@ -3674,6 +3911,70 @@ onBeforeUnmount(() => {
                 <div class="bets-empty">暂无下注明细</div>
               </template>
             </div>
+          </div>
+
+          <div v-if="!betsError" class="mobile-bets-list">
+            <template v-if="displayedBets.length">
+              <article v-for="bet in displayedBets" :key="`mobile-${bet.orderNo}`" class="mobile-bet-card">
+                <div class="mobile-bet-card-head">
+                  <strong>{{ bet.betType || '--' }}</strong>
+                  <span>{{ formatResultStatusLabel(bet.resultStatus) }}</span>
+                </div>
+                <div class="mobile-bet-card-sub">
+                  <span>期号：{{ bet.issueNo || '--' }}</span>
+                  <span>{{ formatDateTime(bet.createdAt) }}</span>
+                </div>
+                <div class="mobile-bet-detail">
+                  <template v-if="getBetResultDisplay(bet)">
+                    <div>{{ getBetResultDisplay(bet).detailSummary }}</div>
+                    <div v-if="getBetResultDisplay(bet).hasResult" class="mobile-bet-result-line">
+                      <span>结果：</span>
+                      <span
+                        v-for="(item, index) in getBetResultDisplay(bet).resultNumbers"
+                        :key="`${bet.orderNo || bet.issueNo || 'mobile-bet'}-${index}`"
+                        :class="{ 'is-hit': item.active }"
+                      >
+                        {{ item.value }}
+                      </span>
+                      <template v-if="getBetResultDisplay(bet).tail">
+                        <span>=</span>
+                        <strong>{{ getBetResultDisplay(bet).tail }}</strong>
+                      </template>
+                    </div>
+                  </template>
+                  <template v-else>{{ getBetDetailWithoutIssue(bet) }} @ {{ getBetOddsDisplay(bet) }}</template>
+                </div>
+                <div class="mobile-bet-amount-grid">
+                  <div>
+                    <span>金额</span>
+                    <strong>{{ bet.betAmount ?? '--' }}</strong>
+                  </div>
+                  <div>
+                    <span>有效</span>
+                    <strong>{{ bet.validAmount ?? '--' }}</strong>
+                  </div>
+                  <div>
+                    <span>派彩</span>
+                    <strong>{{ bet.payoutAmount ?? '--' }}</strong>
+                  </div>
+                  <div>
+                    <span>结果</span>
+                    <strong>{{ bet.resultAmount ?? '--' }}</strong>
+                  </div>
+                </div>
+                <div class="mobile-bet-card-foot">
+                  <span>订单：{{ bet.orderNo || '--' }}</span>
+                  <span>状态：{{ bet.status || '--' }}</span>
+                </div>
+              </article>
+
+              <div class="mobile-bets-total">
+                <span>本页统计：{{ betsPageTotals.count }}笔</span>
+                <strong>金额 {{ formatMoney(betsPageTotals.betAmount) }}</strong>
+                <strong>结果 {{ formatMoney(betsPageTotals.resultAmount) }}</strong>
+              </div>
+            </template>
+            <div v-else class="mobile-bets-empty">暂无下注明细</div>
           </div>
 
           <div v-if="!betsLoading && !betsError" class="bets-view-pagination bets-view-pagination-footer">
@@ -3790,6 +4091,48 @@ onBeforeUnmount(() => {
                 <div class="bets-empty">暂无期数结果</div>
               </template>
             </div>
+          </div>
+
+          <div v-if="!issueResultsError" class="mobile-record-list">
+            <div class="mobile-record-total">
+              <span>总计</span>
+              <strong>{{ issueResultsTotalAmount }}</strong>
+            </div>
+            <template v-if="displayedIssueResults.length">
+              <article v-for="item in displayedIssueResults" :key="`mobile-issue-${item.id || item.issueNo}`" class="mobile-record-card">
+                <div class="mobile-record-head">
+                  <strong>第{{ item.issueNo || '--' }}期</strong>
+                  <span :class="{ 'is-positive': Number(item.memberResultAmount) > 0, 'is-negative': Number(item.memberResultAmount) < 0 }">
+                    {{ formatMoney(item.memberResultAmount) }}
+                  </span>
+                </div>
+                <div class="mobile-record-sub">{{ formatDateTime(item.drawTime) }}</div>
+                <div class="mobile-record-balls">
+                  <span
+                    v-for="(ball, index) in parseDrawCodeNumbers(item.drawCode)"
+                    :key="`mobile-${item.issueNo || 'issue'}-${index}`"
+                    :class="getIssueResultBallClass(item, parseDrawCodeNumbers(item.drawCode), index)"
+                  >
+                    {{ ball }}
+                  </span>
+                </div>
+                <div class="mobile-record-grid">
+                  <div>
+                    <span>番</span>
+                    <strong>{{ String(item.fanResult || '--').replace(/翻/g, '番') }}</strong>
+                  </div>
+                  <div>
+                    <span>单双</span>
+                    <strong>{{ item.oddEvenResult || '--' }}</strong>
+                  </div>
+                  <div>
+                    <span>特码</span>
+                    <strong>{{ Number(item.gameId || selectedGameId) === 4 ? '-' : formatTemaResult(item.temaResult) }}</strong>
+                  </div>
+                </div>
+              </article>
+            </template>
+            <div v-else class="mobile-bets-empty">暂无期数结果</div>
           </div>
 
           <div v-if="!issueResultsLoading && !issueResultsError" class="bets-view-pagination bets-view-pagination-footer">
@@ -4058,6 +4401,70 @@ onBeforeUnmount(() => {
           </div>
 
           <div
+            v-if="
+              !(dailySummarySelectedDate && dailySummaryGamesError) &&
+              !dailySummaryError
+            "
+            class="mobile-history-list"
+          >
+            <template v-if="dailySummarySelectedDate">
+              <template v-if="displayedDailySummaryGames.length">
+                <article
+                  v-for="item in displayedDailySummaryGames"
+                  :key="`mobile-history-detail-${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                  class="mobile-record-card"
+                  @click="openBetsFromDailySummaryGame(item)"
+                >
+                  <div class="mobile-record-head">
+                    <strong>{{ item.betType || '--' }}</strong>
+                    <span>{{ formatMoney(item.resultAmount) }}</span>
+                  </div>
+                  <div class="mobile-record-sub">{{ item.tradeDate || dailySummarySelectedDate }}</div>
+                  <div class="mobile-record-grid">
+                    <div><span>注单数</span><strong>{{ item.orderCount ?? '--' }}</strong></div>
+                    <div><span>下注</span><strong>{{ formatMoney(item.betAmount) }}</strong></div>
+                    <div><span>有效</span><strong>{{ formatMoney(item.validAmount) }}</strong></div>
+                    <div><span>派彩</span><strong>{{ formatMoney(item.payoutAmount) }}</strong></div>
+                  </div>
+                </article>
+                <div class="mobile-record-total">
+                  <span>共计：{{ dailySummaryGamesTotals.orderCount }}单</span>
+                  <strong>{{ formatMoney(dailySummaryGamesTotals.resultAmount) }}</strong>
+                </div>
+              </template>
+              <div v-else class="mobile-bets-empty">暂无账户历史明细</div>
+            </template>
+
+            <template v-else>
+              <template v-if="displayedDailySummary.length">
+                <article
+                  v-for="item in displayedDailySummary"
+                  :key="`mobile-history-${item.tradeDate}-${item.gameId || 'all'}-${item.betType || 'all'}`"
+                  class="mobile-record-card"
+                  @click="openDailySummaryDate(item.tradeDate)"
+                >
+                  <div class="mobile-record-head">
+                    <strong>{{ item.tradeDate || '--' }}</strong>
+                    <span>{{ formatMoney(item.resultAmount) }}</span>
+                  </div>
+                  <div class="mobile-record-sub">{{ item.betType || '全部游戏' }}</div>
+                  <div class="mobile-record-grid">
+                    <div><span>注单数</span><strong>{{ item.orderCount ?? '--' }}</strong></div>
+                    <div><span>下注</span><strong>{{ formatMoney(item.betAmount) }}</strong></div>
+                    <div><span>有效</span><strong>{{ formatMoney(item.validAmount) }}</strong></div>
+                    <div><span>派彩</span><strong>{{ formatMoney(item.payoutAmount) }}</strong></div>
+                  </div>
+                </article>
+                <div class="mobile-record-total">
+                  <span>总计：{{ dailySummaryTotals.orderCount }}单</span>
+                  <strong>{{ formatMoney(dailySummaryTotals.resultAmount) }}</strong>
+                </div>
+              </template>
+              <div v-else class="mobile-bets-empty">暂无账户历史</div>
+            </template>
+          </div>
+
+          <div
             v-if="!dailySummarySelectedDate && !dailySummaryLoading && !dailySummaryError"
             class="bets-view-pagination bets-view-pagination-footer"
           >
@@ -4275,6 +4682,80 @@ onBeforeUnmount(() => {
             @select-bet-play="selectBetPlay"
             @select-ball="selectBall"
           />
+        </template>
+      </section>
+
+      <section
+        v-if="activeQuickAction === '游戏投注'"
+        class="mobile-bet-slip"
+        :class="{ 'is-collapsed': mobileBetSlipCollapsed }"
+      >
+        <div class="mobile-bet-slip-summary">
+          <span>已选 {{ betCount }} 笔</span>
+          <strong>总额：{{ betTotalAmount }}</strong>
+          <button type="button" @click="mobileBetSlipCollapsed = !mobileBetSlipCollapsed">
+            {{ mobileBetSlipCollapsed ? '展开' : '收起' }}
+          </button>
+        </div>
+        <div v-if="!mobileBetSlipCollapsed" class="mobile-bet-slip-actions">
+          <input
+            :value="batchBetAmount"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="统一下注金额"
+            @input="updateBatchBetAmount($event.target.value)"
+          />
+          <button
+            type="button"
+            :disabled="betSubmitting || !selectedBetPlay"
+            @click="submitBet"
+          >
+            {{ betSubmitting ? '提交中' : '下注' }}
+          </button>
+        </div>
+        <div v-if="!mobileBetSlipCollapsed" class="mobile-quick-amounts">
+          <button
+            v-for="amount in quickBetAmounts"
+            :key="`mobile-${amount}`"
+            type="button"
+            @click="updateBatchBetAmount(String(amount))"
+          >
+            {{ amount }}
+          </button>
+          <button
+            type="button"
+            class="mobile-quick-clear"
+            @click="updateBatchBetAmount('')"
+          >
+            清零
+          </button>
+        </div>
+        <div v-if="!mobileBetSlipCollapsed" class="mobile-bet-detail-select">
+          <label>
+            <span>下注明细</span>
+            <select
+              :value="selectedBetPlay"
+              :disabled="!betSlipItems.length"
+              @change="selectedBetPlay = $event.target.value"
+            >
+              <option value="" disabled>{{ betSlipItems.length ? '请选择注单' : '请选择玩法' }}</option>
+              <option v-for="item in betSlipItems" :key="item.playName" :value="item.playName">
+                {{ item.playName }} @ {{ item.odds }}
+              </option>
+            </select>
+          </label>
+          <button
+            type="button"
+            :disabled="!selectedBetPlay"
+            @click="removeBetSlipItem(selectedBetPlay)"
+          >
+            删除
+          </button>
+        </div>
+        <template v-if="!mobileBetSlipCollapsed">
+          <p v-if="betSubmitError" class="mobile-bet-slip-message is-error">{{ betSubmitError }}</p>
+          <p v-else-if="betSubmitMessage" class="mobile-bet-slip-message is-success">{{ betSubmitMessage }}</p>
         </template>
       </section>
     </section>
