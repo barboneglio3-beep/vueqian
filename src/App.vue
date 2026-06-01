@@ -31,8 +31,8 @@ const agreementItems = [
   '14.会员账号余额只做参考不做交收依据,一律以报表为准。',
 ]
 
-const quickActions = ['游戏投注', '下注明细', '期数结果', '账户历史', '个人资讯', '游戏规则']
-const mobileMenuActions = ['个人资讯', '游戏大厅', '游戏投注', '下注明细', '期数结果', '账户历史', '游戏规则']
+const quickActions = ['游戏投注', '未结明细', '期数结果', '账户历史', '个人资讯', '游戏规则']
+const mobileMenuActions = ['个人资讯', '游戏大厅', '游戏投注', '未结明细', '期数结果', '账户历史', '游戏规则']
 const gameRuleSections = [
   {
     id: 'australia-fantan',
@@ -170,7 +170,8 @@ const readDashboardCache = () => {
 
 const readStoredActiveQuickAction = () => {
   try {
-    const action = localStorage.getItem(ACTIVE_QUICK_ACTION_KEY)
+    const storedAction = localStorage.getItem(ACTIVE_QUICK_ACTION_KEY)
+    const action = storedAction === '下注明细' ? '未结明细' : storedAction
     const validActions = new Set([...quickActions, ...mobileMenuActions])
     if (action === '游戏大厅' && !window.matchMedia('(max-width: 768px)').matches) {
       return '游戏投注'
@@ -1013,7 +1014,7 @@ const globalLoadingText = computed(() => {
     return '账户历史加载中...'
   }
   if (betsLoading.value) {
-    return '下注明细加载中...'
+    return '未结明细加载中...'
   }
   return ''
 })
@@ -1286,11 +1287,15 @@ const latestDrawActiveIndices = computed(() => {
     return []
   }
 
-  if ([4, 5, 6].includes(Number(selectedGame.value?.id || 0))) {
-    return [Math.max(0, numberCount - 2), numberCount - 1]
+  const gameId = Number(selectedGame.value?.id || 0)
+  if (gamesWithoutBallSelector.includes(gameId)) {
+    return getGameDefaultHighlightIndices(gameId, latestDrawNumbers.value)
   }
 
-  return [numberCount - 1]
+  const selectedBallIndices = getHighlightedResultIndices(gameId, latestDrawNumbers.value, selectedBall.value)
+  return selectedBallIndices.length
+    ? selectedBallIndices
+    : getGameDefaultHighlightIndices(gameId, latestDrawNumbers.value)
 })
 
 const getHighlightedResultIndices = (gameId, numbers, ballIndex) => {
@@ -2245,7 +2250,7 @@ const loadBets = async (gameId, page = 0, silent = false) => {
 
     if (!silent) {
       bets.value = []
-      betsError.value = error instanceof Error ? error.message : '下注明细加载失败'
+      betsError.value = error instanceof Error ? error.message : '未结明细加载失败'
     }
   } finally {
     if (!silent && requestId === betsRequestId) {
@@ -2684,7 +2689,7 @@ const refreshActiveView = async () => {
     return
   }
 
-  if (activeQuickAction.value === '下注明细') {
+  if (activeQuickAction.value === '未结明细') {
     return
   }
 
@@ -2976,12 +2981,13 @@ const selectQuickAction = async (action) => {
   }
 
   mobileLobbyOpen.value = false
-  if (action === '下注明细') {
+  if (action === '未结明细') {
     resetBetsFilters()
+    betsFilters.gameId = selectedGameId.value || null
     betsFilters.status = '未结算'
     bets.value = []
     betsError.value = ''
-    await loadBets(selectedGameId.value, 0, false)
+    await loadBets(null, 0, false)
     return
   }
 
@@ -3073,7 +3079,7 @@ const selectGame = async (gameId) => {
   applyCachedGameViewData(gameId)
   const shouldSilentRefreshPlaySettings = hasCachedPlaySettings(gameId)
 
-  if (activeQuickAction.value === '下注明细') {
+  if (activeQuickAction.value === '未结明细') {
     bets.value = []
     betsError.value = ''
     await loadBets(gameId, 0, false)
@@ -3119,7 +3125,19 @@ const changeBetsPage = async (nextPage) => {
     return
   }
 
-  await loadBets(selectedGameId.value, nextPage, false)
+  await loadBets(null, nextPage, false)
+}
+
+const applyBetsFilters = async () => {
+  bets.value = []
+  betsError.value = ''
+  await loadBets(null, 0, false)
+}
+
+const handleBetsGameChange = async (value) => {
+  const nextGameId = Number(value)
+  betsFilters.gameId = Number.isFinite(nextGameId) && nextGameId > 0 ? nextGameId : null
+  await applyBetsFilters()
 }
 
 const changeDailySummaryPage = async (nextPage) => {
@@ -3155,7 +3173,7 @@ const openBetsFromDailySummaryGame = async (item) => {
   betsFilters.status = ''
   bets.value = []
   betsError.value = ''
-  activeQuickAction.value = '下注明细'
+  activeQuickAction.value = '未结明细'
   await loadBets(null, 0, false)
 }
 
@@ -3585,9 +3603,9 @@ onBeforeUnmount(() => {
           <span class="mobile-lobby-action-icon">▣</span>
           <strong>信用资料</strong>
         </button>
-        <button type="button" @click="openMobileQuickAction('下注明细')">
+        <button type="button" @click="openMobileQuickAction('未结明细')">
           <span class="mobile-lobby-action-icon">▤</span>
-          <strong>下注明细</strong>
+          <strong>未结明细</strong>
         </button>
         <button type="button" @click="openMobileQuickAction('期数结果')">
           <span class="mobile-lobby-action-icon">▥</span>
@@ -3784,12 +3802,12 @@ onBeforeUnmount(() => {
           <h3>最近注单</h3>
 
           <p v-if="betsError" class="bill-message is-error">{{ betsError }}</p>
-          <p v-else-if="betsLoading && !displayedBets.length" class="bill-message">下注明细加载中...</p>
+          <p v-else-if="betsLoading && !displayedBets.length" class="bill-message">未结明细加载中...</p>
 
           <template v-if="!betsError">
             <div class="bill-table">
               <div class="bill-head">游戏</div>
-              <div class="bill-head">下注明细</div>
+              <div class="bill-head">未结明细</div>
               <div class="bill-head">赔率</div>
               <div class="bill-head">金额</div>
               <template v-if="displayedBets.length">
@@ -3833,13 +3851,24 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="console-main">
-        <section v-if="activeQuickAction === '下注明细'" class="bets-view bets-detail-view">
+        <section v-if="activeQuickAction === '未结明细'" class="bets-view bets-detail-view">
           <div class="bets-view-header">
-            <h2>下注明细</h2>
+            <h2>未结明细</h2>
+            <div class="bets-filter-bar">
+              <label class="bets-filter-field">
+                <span>游戏:</span>
+                <select :value="betsFilters.gameId || ''" @change="handleBetsGameChange($event.target.value)">
+                  <option value="">全部游戏</option>
+                  <option v-for="game in games" :key="game.id" :value="game.id">
+                    {{ game.gameName }}
+                  </option>
+                </select>
+              </label>
+            </div>
           </div>
 
           <p v-if="betsError" class="console-message is-error">{{ betsError }}</p>
-          <p v-else-if="betsLoading && !displayedBets.length" class="console-message">下注明细加载中...</p>
+          <p v-else-if="betsLoading && !displayedBets.length" class="console-message">未结明细加载中...</p>
 
           <div v-if="!betsError" class="bets-table-wrap">
             <div class="bets-table">
@@ -3908,7 +3937,7 @@ onBeforeUnmount(() => {
                 <div class="bets-cell history-total-cell">--</div>
               </template>
               <template v-else>
-                <div class="bets-empty">暂无下注明细</div>
+                <div class="bets-empty">暂无未结明细</div>
               </template>
             </div>
           </div>
@@ -3974,7 +4003,7 @@ onBeforeUnmount(() => {
                 <strong>结果 {{ formatMoney(betsPageTotals.resultAmount) }}</strong>
               </div>
             </template>
-            <div v-else class="mobile-bets-empty">暂无下注明细</div>
+            <div v-else class="mobile-bets-empty">暂无未结明细</div>
           </div>
 
           <div v-if="!betsLoading && !betsError" class="bets-view-pagination bets-view-pagination-footer">
@@ -4733,7 +4762,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="!mobileBetSlipCollapsed" class="mobile-bet-detail-select">
           <label>
-            <span>下注明细</span>
+            <span>注单明细</span>
             <select
               :value="selectedBetPlay"
               :disabled="!betSlipItems.length"

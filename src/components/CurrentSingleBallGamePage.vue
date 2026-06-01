@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 const props = defineProps({
   games: { type: Array, required: true },
   selectedGame: { type: Object, default: null },
@@ -72,6 +72,8 @@ const hasVisibleDrawData = computed(() => {
 const isPlaySelected = (playName) => {
   return props.selectedBetPlays.includes(playName)
 }
+
+const mobileTrendOpen = ref(false)
 </script>
 
 <template>
@@ -171,6 +173,30 @@ const isPlaySelected = (playName) => {
     <span>{{ currentIssueStatusText }}</span>
     <span>开奖时间：{{ formatDateTime(selectedGame?.currentDrawTime) }}</span>
   </div>
+
+  <button
+    type="button"
+    class="mobile-trend-toggle"
+    @click="mobileTrendOpen = !mobileTrendOpen"
+  >
+    {{ mobileTrendOpen ? '收起番路' : '查看番路' }}
+  </button>
+
+  <section v-if="mobileTrendOpen" class="mobile-trend-panel">
+    <div class="trend-title">番路</div>
+    <div class="trend-table">
+      <template v-for="(row, rowIndex) in trendRows" :key="`mobile-row-${rowIndex}`">
+        <div
+          v-for="(cell, colIndex) in row"
+          :key="`mobile-cell-${rowIndex}-${colIndex}`"
+          class="trend-cell"
+          :class="{ accent: cell % 2 === 0 }"
+        >
+          {{ cell }}
+        </div>
+      </template>
+    </div>
+  </section>
 
   <p v-if="playSettingsError" class="console-message is-error">{{ playSettingsError }}</p>
   <p v-else-if="playSettingsLoading" class="console-message">玩法赔率加载中...</p>
@@ -399,7 +425,7 @@ const isPlaySelected = (playName) => {
     </section>
 
     <aside class="trend-panel">
-      <div class="trend-title">号码走势</div>
+      <div class="trend-title">番路</div>
       <div class="trend-table">
         <template v-for="(row, rowIndex) in trendRows" :key="`row-${rowIndex}`">
           <div
