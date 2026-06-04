@@ -557,22 +557,27 @@ input {
 
   .mobile-game-logo-text {
     position: absolute;
-    left: 11px;
-    top: 16px;
+    left: 0;
+    right: 0;
+    top: 12px;
     z-index: 1;
-    width: 28px;
-    font-size: 13px;
-    line-height: 1.05;
+    width: auto;
+    padding: 0 8px;
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 1px;
+    white-space: nowrap;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   }
 
   .mobile-game-logo-main {
     position: absolute;
-    right: 8px;
-    top: 13px;
+    left: 0;
+    right: 0;
+    top: 24px;
     z-index: 1;
     font-family: Arial, sans-serif;
-    font-size: 38px;
+    font-size: 34px;
     line-height: 1;
     color: #fff45c;
     text-shadow:
@@ -599,13 +604,12 @@ input {
   }
 
   .mobile-game-logo-3 .mobile-game-logo-text {
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .mobile-game-logo-3 .mobile-game-logo-main {
-    right: 7px;
     color: #ffffff;
-    font-size: 32px;
+    font-size: 34px;
   }
 
   .mobile-game-logo-4 {
@@ -1402,6 +1406,22 @@ input {
 .user-row strong {
   color: #ffffff;
   font-size: 14px;
+}
+
+.unsettled-link {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.unsettled-link:hover {
+  color: #ffe493;
+  text-decoration: underline;
 }
 
 .quick-links {
@@ -3150,6 +3170,22 @@ input {
     font-size: 16px;
   }
 
+  .board-clickable:not(.active):hover {
+    background: rgba(14, 58, 60, 0.32) !important;
+    box-shadow: none !important;
+  }
+
+  .cross-area.board-clickable:not(.active):hover {
+    background: transparent !important;
+  }
+
+  .extra-play-card.board-clickable:not(.active):hover,
+  .tema-side-card.board-clickable:not(.active):hover,
+  .tema-number-card.board-clickable:not(.active):hover {
+    background: #ffffff !important;
+    box-shadow: none !important;
+  }
+
   .trend-panel {
     display: none !important;
   }
@@ -3485,6 +3521,14 @@ input {
     white-space: nowrap;
   }
 
+  .mobile-account-strip .unsettled-link {
+    overflow: hidden;
+    color: #ffffff;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .console-main {
     overflow-x: hidden !important;
   }
@@ -3527,6 +3571,10 @@ input {
   }
 
   .bets-detail-view .bets-table-wrap {
+    display: none;
+  }
+
+  .history-view .bets-table-wrap {
     display: none;
   }
 

@@ -168,6 +168,10 @@ const readDashboardCache = () => {
   }
 }
 
+const getDefaultActiveQuickAction = () => (
+  window.matchMedia('(max-width: 768px)').matches ? '游戏大厅' : '游戏投注'
+)
+
 const readStoredActiveQuickAction = () => {
   try {
     const storedAction = localStorage.getItem(ACTIVE_QUICK_ACTION_KEY)
@@ -176,9 +180,9 @@ const readStoredActiveQuickAction = () => {
     if (action === '游戏大厅' && !window.matchMedia('(max-width: 768px)').matches) {
       return '游戏投注'
     }
-    return validActions.has(action) ? action : '游戏投注'
+    return validActions.has(action) ? action : getDefaultActiveQuickAction()
   } catch {
-    return '游戏投注'
+    return getDefaultActiveQuickAction()
   }
 }
 
@@ -225,6 +229,24 @@ const formatLoginTitleText = (value) => {
   }
 
   return /^[\u4e00-\u9fa5]+$/.test(text) ? text.split('').join(' ') : text
+}
+
+const mobileGameLogoTextMap = {
+  1: { text: '澳洲幸运', main: '8' },
+  2: { text: '澳洲幸运', main: '8' },
+  3: { text: '澳洲幸运', main: '8' },
+  4: { text: '澳洲幸运', main: '5' },
+  5: { text: '加拿大', main: '28' },
+  6: { text: '台湾幸运', main: '3' },
+  7: { text: '台湾幸运', main: '8' },
+}
+
+const getMobileGameLogoText = (game) => {
+  return mobileGameLogoTextMap[Number(game?.id)]?.text || String(game?.gameName || '游戏').slice(0, 4)
+}
+
+const getMobileGameLogoMain = (game) => {
+  return mobileGameLogoTextMap[Number(game?.id)]?.main || (String(game?.gameName || '').includes('28') ? '28' : '8')
 }
 
 const getInitialView = (session) => {
@@ -309,6 +331,16 @@ const dailySummarySelectedDate = ref('')
 const dailySummaryGames = ref([])
 const dailySummaryGamesLoading = ref(false)
 const dailySummaryGamesError = ref('')
+const dailySummaryBetDetails = ref([])
+const dailySummaryBetDetailsLoading = ref(false)
+const dailySummaryBetDetailsError = ref('')
+const dailySummaryBetDetailsGame = ref(null)
+const dailySummaryBetDetailsPage = ref({
+  total: 0,
+  page: 0,
+  size: 6,
+  totalPages: 0,
+})
 const dailySummaryPage = ref({
   total: 0,
   page: 0,
@@ -570,6 +602,7 @@ const currentBetSideType = computed(() => {
 const displayedBets = computed(() => bets.value)
 const displayedDailySummary = computed(() => dailySummary.value)
 const displayedDailySummaryGames = computed(() => dailySummaryGames.value)
+const displayedDailySummaryBetDetails = computed(() => dailySummaryBetDetails.value)
 const currentAnnouncementTime = ref(formatAnnouncementCurrentTime())
 const currentAnnouncementIndex = ref(0)
 const announcementTexts = computed(() => {
@@ -1085,6 +1118,27 @@ watch(activeQuickAction, (action) => {
 
 const betsPageTotals = computed(() => {
   return displayedBets.value.reduce(
+    (accumulator, item) => {
+      accumulator.count += 1
+      accumulator.betAmount += Number(item?.betAmount) || 0
+      accumulator.validAmount += Number(item?.validAmount) || 0
+      accumulator.payoutAmount += Number(item?.payoutAmount) || 0
+      accumulator.rebateAmount += Number(item?.rebateAmount) || 0
+      accumulator.resultAmount += Number(item?.resultAmount) || 0
+      return accumulator
+    },
+    {
+      count: 0,
+      betAmount: 0,
+      validAmount: 0,
+      payoutAmount: 0,
+      rebateAmount: 0,
+      resultAmount: 0,
+    },
+  )
+})
+const dailySummaryBetDetailsPageTotals = computed(() => {
+  return displayedDailySummaryBetDetails.value.reduce(
     (accumulator, item) => {
       accumulator.count += 1
       accumulator.betAmount += Number(item?.betAmount) || 0
@@ -2335,6 +2389,56 @@ const loadDailySummaryGames = async (tradeDate, silent = false) => {
   }
 }
 
+const loadDailySummaryBetDetails = async (gameId, tradeDate, page = 0, silent = false) => {
+  if (!gameId || !tradeDate) {
+    dailySummaryBetDetails.value = []
+    dailySummaryBetDetailsError.value = ''
+    dailySummaryBetDetailsPage.value = {
+      ...dailySummaryBetDetailsPage.value,
+      total: 0,
+      page: 0,
+      totalPages: 0,
+    }
+    return
+  }
+
+  const businessDayRange = getBusinessDayRangeByDate(tradeDate)
+  const query = new URLSearchParams({
+    page: String(page),
+    size: String(dailySummaryBetDetailsPage.value.size),
+    gameId: String(gameId),
+    startAt: businessDayRange.startAt,
+    endAt: businessDayRange.endAt,
+  })
+
+  if (!silent) {
+    dailySummaryBetDetailsLoading.value = true
+    dailySummaryBetDetailsError.value = ''
+  }
+
+  try {
+    const payload = await apiFetch(`/api/bets?${query.toString()}`)
+    const pageData = payload.data || payload
+    const list = pageData.records || pageData.content || pageData.list || pageData.items || []
+    dailySummaryBetDetails.value = Array.isArray(list) ? list : []
+    dailySummaryBetDetailsPage.value = {
+      total: pageData.total || 0,
+      page: pageData.page || 0,
+      size: pageData.size || dailySummaryBetDetailsPage.value.size,
+      totalPages: pageData.totalPages || 0,
+    }
+  } catch (error) {
+    if (!silent) {
+      dailySummaryBetDetails.value = []
+      dailySummaryBetDetailsError.value = error instanceof Error ? error.message : '账户历史注单明细加载失败'
+    }
+  } finally {
+    if (!silent) {
+      dailySummaryBetDetailsLoading.value = false
+    }
+  }
+}
+
 const loadMemberInfo = async (silent = false) => {
   const requestId = ++memberInfoRequestId
 
@@ -2812,8 +2916,10 @@ const handleSubmit = async () => {
 
 const agreeProtocol = async () => {
   localStorage.setItem(AGREEMENT_KEY, '1')
+  const defaultAction = getDefaultActiveQuickAction()
   view.value = 'dashboard'
-  activeQuickAction.value = '游戏投注'
+  activeQuickAction.value = defaultAction
+  mobileLobbyOpen.value = defaultAction === '游戏大厅'
   await loadDashboard()
   startAutoRefresh()
 }
@@ -2958,6 +3064,21 @@ const openMobileQuickAction = async (action) => {
   await selectQuickAction(action)
 }
 
+const openCurrentGameUnsettledBets = async () => {
+  if (!selectedGameId.value) {
+    return
+  }
+
+  mobileLobbyOpen.value = false
+  activeQuickAction.value = '未结明细'
+  resetBetsFilters()
+  betsFilters.gameId = selectedGameId.value
+  betsFilters.status = '未结算'
+  bets.value = []
+  betsError.value = ''
+  await loadBets(null, 0, false)
+}
+
 const openMobileLobby = () => {
   mobileLobbyOpen.value = true
   activeQuickAction.value = '游戏大厅'
@@ -3092,6 +3213,15 @@ const selectGame = async (gameId) => {
   }
 
   if (activeQuickAction.value === '账户历史') {
+    if (dailySummaryBetDetailsGame.value && dailySummarySelectedDate.value) {
+      await loadDailySummaryBetDetails(
+        dailySummaryBetDetailsGame.value.gameId,
+        dailySummarySelectedDate.value,
+        dailySummaryBetDetailsPage.value.page,
+        false,
+      )
+      return
+    }
     if (dailySummarySelectedDate.value) {
       await loadDailySummaryGames(dailySummarySelectedDate.value, false)
       return
@@ -3151,6 +3281,28 @@ const changeDailySummaryPage = async (nextPage) => {
   await loadDailySummary(null, nextPage, false)
 }
 
+const changeDailySummaryBetDetailsPage = async (nextPage) => {
+  if (nextPage < 0) {
+    return
+  }
+  if (
+    dailySummaryBetDetailsPage.value.totalPages > 0 &&
+    nextPage >= dailySummaryBetDetailsPage.value.totalPages
+  ) {
+    return
+  }
+  if (!dailySummaryBetDetailsGame.value || !dailySummarySelectedDate.value) {
+    return
+  }
+
+  await loadDailySummaryBetDetails(
+    dailySummaryBetDetailsGame.value.gameId,
+    dailySummarySelectedDate.value,
+    nextPage,
+    false,
+  )
+}
+
 const resetBetsFilters = () => {
   const businessDayRange = getBusinessDayRange()
   betsFilters.gameId = null
@@ -3165,27 +3317,39 @@ const openBetsFromDailySummaryGame = async (item) => {
     return
   }
 
-  const businessDayRange = getBusinessDayRangeByDate(dailySummarySelectedDate.value)
-  selectedGameId.value = targetGameId
-  betsFilters.gameId = targetGameId
-  betsFilters.startAt = businessDayRange.startAt
-  betsFilters.endAt = businessDayRange.endAt
-  betsFilters.status = ''
-  bets.value = []
-  betsError.value = ''
-  activeQuickAction.value = '未结明细'
-  await loadBets(null, 0, false)
+  dailySummaryBetDetailsGame.value = {
+    gameId: targetGameId,
+    betType: item?.betType || '',
+  }
+  dailySummaryBetDetails.value = []
+  dailySummaryBetDetailsError.value = ''
+  await loadDailySummaryBetDetails(targetGameId, dailySummarySelectedDate.value, 0, false)
 }
 
 const openDailySummaryDate = async (tradeDate) => {
   dailySummarySelectedDate.value = String(tradeDate || '').trim()
+  closeDailySummaryBetDetails()
   await loadDailySummaryGames(dailySummarySelectedDate.value, false)
 }
 
 const closeDailySummaryDate = () => {
+  closeDailySummaryBetDetails()
   dailySummarySelectedDate.value = ''
   dailySummaryGames.value = []
   dailySummaryGamesError.value = ''
+}
+
+const closeDailySummaryBetDetails = () => {
+  dailySummaryBetDetailsGame.value = null
+  dailySummaryBetDetails.value = []
+  dailySummaryBetDetailsError.value = ''
+  dailySummaryBetDetailsLoading.value = false
+  dailySummaryBetDetailsPage.value = {
+    ...dailySummaryBetDetailsPage.value,
+    total: 0,
+    page: 0,
+    totalPages: 0,
+  }
 }
 
 const applyDailySummaryFilters = async () => {
@@ -3322,7 +3486,7 @@ const submitBet = async () => {
   betSubmitting.value = true
 
   try {
-    for (const item of betSlipItems.value) {
+    const betRequests = betSlipItems.value.map((item) => {
       const gamePlayId = item.gamePlayId
       const selectionValue = buildSelectionValue(item.playName)
       const betAmount = Number(item.betAmount)
@@ -3339,22 +3503,24 @@ const submitBet = async () => {
         throw new Error(`玩法 ${item.playName} 请输入正确的下注金额`)
       }
 
-      await apiFetch('/api/bets', {
-        method: 'POST',
-        body: JSON.stringify({
-          memberId: item.memberId || currentMemberId.value,
-          gameId: selectedGame.value.id,
-          gamePlayId,
-          ...(currentBetSideType.value ? { betSideType: currentBetSideType.value } : {}),
-          ...(gamesWithoutBallSelector.includes(Number(selectedGame.value.id))
-            ? {}
-            : { ballIndex: selectedBall.value }),
-          selectionValue,
-          betAmount: Number(formatMoney(betAmount)),
-          clientType: isMobileViewport.value ? 'H5' : 'PC',
-        }),
-      })
-    }
+      return {
+        memberId: item.memberId || currentMemberId.value,
+        gameId: selectedGame.value.id,
+        gamePlayId,
+        ...(currentBetSideType.value ? { betSideType: currentBetSideType.value } : {}),
+        ...(gamesWithoutBallSelector.includes(Number(selectedGame.value.id))
+          ? {}
+          : { ballIndex: selectedBall.value }),
+        selectionValue,
+        betAmount: Number(formatMoney(betAmount)),
+        clientType: isMobileViewport.value ? 'H5' : 'PC',
+      }
+    })
+
+    await apiFetch('/api/bets', {
+      method: 'POST',
+      body: JSON.stringify(betRequests),
+    })
 
     betSubmitMessage.value = '下注成功'
     betSlipItems.value = []
@@ -3622,8 +3788,8 @@ onBeforeUnmount(() => {
           @click="openMobileGame(game.id)"
         >
           <span class="mobile-game-logo" :class="`mobile-game-logo-${(index % 4) + 1}`">
-            <span class="mobile-game-logo-text">{{ String(game.gameName || '游戏').slice(0, 4) }}</span>
-            <span class="mobile-game-logo-main">{{ String(game.gameName || '').includes('28') ? '28' : '8' }}</span>
+            <span class="mobile-game-logo-text">{{ getMobileGameLogoText(game) }}</span>
+            <span class="mobile-game-logo-main">{{ getMobileGameLogoMain(game) }}</span>
           </span>
           <span class="mobile-game-info">
             <strong>{{ game.gameName }}</strong>
@@ -3655,7 +3821,9 @@ onBeforeUnmount(() => {
       </div>
       <div>
         <span>未结算</span>
-        <strong>{{ formatMoney(currentUser?.unsettledOrderAmount) }}</strong>
+        <button type="button" class="unsettled-link" @click="openCurrentGameUnsettledBets">
+          {{ formatMoney(currentUser?.unsettledOrderAmount) }}
+        </button>
       </div>
     </section>
 
@@ -3683,7 +3851,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="user-row">
             <span>未结算金额</span>
-            <strong>{{ formatMoney(currentUser?.unsettledOrderAmount) }}</strong>
+            <button type="button" class="unsettled-link" @click="openCurrentGameUnsettledBets">
+              {{ formatMoney(currentUser?.unsettledOrderAmount) }}
+            </button>
           </div>
         </div>
 
@@ -4183,7 +4353,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-else-if="activeQuickAction === '账户历史'" class="bets-view">
+        <section v-else-if="activeQuickAction === '账户历史'" class="bets-view history-view">
           <div class="bets-view-header">
             <h2>账户历史</h2>
           </div>
@@ -4201,12 +4371,28 @@ onBeforeUnmount(() => {
             <button type="button" class="history-filter-button" @click="setDailySummaryThisWeek">本周</button>
           </div>
 
+          <div v-else-if="dailySummaryBetDetailsGame" class="history-detail-toolbar">
+            <button type="button" class="history-back-button" @click="closeDailySummaryBetDetails">返回</button>
+            <span class="history-detail-title">
+              {{ dailySummarySelectedDate }} / {{ dailySummaryBetDetailsGame.betType || '注单明细' }}
+            </span>
+          </div>
+
           <div v-else class="history-detail-toolbar">
             <button type="button" class="history-back-button" @click="closeDailySummaryDate">返回</button>
             <span class="history-detail-title">{{ dailySummarySelectedDate }}</span>
           </div>
 
-          <p v-if="dailySummarySelectedDate && dailySummaryGamesError" class="console-message is-error">
+          <p v-if="dailySummaryBetDetailsGame && dailySummaryBetDetailsError" class="console-message is-error">
+            {{ dailySummaryBetDetailsError }}
+          </p>
+          <p
+            v-else-if="dailySummaryBetDetailsGame && dailySummaryBetDetailsLoading && !displayedDailySummaryBetDetails.length"
+            class="console-message"
+          >
+            账户历史注单明细加载中...
+          </p>
+          <p v-else-if="dailySummarySelectedDate && dailySummaryGamesError" class="console-message is-error">
             {{ dailySummaryGamesError }}
           </p>
           <p
@@ -4222,12 +4408,84 @@ onBeforeUnmount(() => {
 
           <div
             v-if="
+              !(dailySummaryBetDetailsGame && dailySummaryBetDetailsError) &&
               !(dailySummarySelectedDate && dailySummaryGamesError) &&
               !dailySummaryError
             "
             class="bets-table-wrap"
           >
-            <template v-if="dailySummarySelectedDate">
+            <template v-if="dailySummaryBetDetailsGame">
+              <div class="bets-table">
+                <div class="bets-head">订单号</div>
+                <div class="bets-head">下注时间</div>
+                <div class="bets-head">下注类型</div>
+                <div class="bets-head">开奖结果说明</div>
+                <div class="bets-head">金额</div>
+                <div class="bets-head">有效金额</div>
+                <div class="bets-head">派彩</div>
+                <div class="bets-head">退水</div>
+                <div class="bets-head">结果金额</div>
+                <div class="bets-head">判定状态</div>
+                <div class="bets-head">状态</div>
+
+                <template v-if="displayedDailySummaryBetDetails.length">
+                  <template v-for="bet in displayedDailySummaryBetDetails" :key="`history-bet-${bet.orderNo}`">
+                    <div class="bets-cell">{{ bet.orderNo || '--' }}</div>
+                    <div class="bets-cell">{{ formatDateTime(bet.createdAt) }}</div>
+                    <div class="bets-cell bill-type-cell">
+                      <span class="bill-type-name">{{ bet.betType || '--' }}</span>
+                      <span class="bill-type-issue">{{ bet.issueNo || '--' }}</span>
+                    </div>
+                    <div class="bets-cell bets-result-cell">
+                      <template v-if="getBetResultDisplay(bet)">
+                        <div class="bets-result-card">
+                          <div class="bets-result-line">{{ getBetResultDisplay(bet).detailSummary }}</div>
+                          <div v-if="getBetResultDisplay(bet).hasResult" class="bets-result-line">
+                            <span>结果：</span>
+                            <span class="bets-result-numbers">
+                              <span
+                                v-for="(item, index) in getBetResultDisplay(bet).resultNumbers"
+                                :key="`${bet.orderNo || bet.issueNo || 'history-bet'}-${index}`"
+                                :class="['bets-result-number', { 'is-hit': item.active }]"
+                              >
+                                {{ item.value }}
+                              </span>
+                            </span>
+                            <template v-if="getBetResultDisplay(bet).tail">
+                              <span> = </span>
+                              <span class="bets-result-tail">{{ getBetResultDisplay(bet).tail }}</span>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else>{{ getBetDetailWithoutIssue(bet) }} @ {{ getBetOddsDisplay(bet) }}</template>
+                    </div>
+                    <div class="bets-cell">{{ bet.betAmount ?? '--' }}</div>
+                    <div class="bets-cell">{{ bet.validAmount ?? '--' }}</div>
+                    <div class="bets-cell">{{ bet.payoutAmount ?? '--' }}</div>
+                    <div class="bets-cell">{{ bet.rebateAmount ?? '--' }}</div>
+                    <div class="bets-cell">{{ bet.resultAmount ?? '--' }}</div>
+                    <div class="bets-cell">{{ formatResultStatusLabel(bet.resultStatus) }}</div>
+                    <div class="bets-cell">{{ bet.status || '--' }}</div>
+                  </template>
+                  <div class="bets-cell history-total-cell">本页统计</div>
+                  <div class="bets-cell history-total-cell">--</div>
+                  <div class="bets-cell history-total-cell">--</div>
+                  <div class="bets-cell history-total-cell">{{ dailySummaryBetDetailsPageTotals.count }}笔</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryBetDetailsPageTotals.betAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryBetDetailsPageTotals.validAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryBetDetailsPageTotals.payoutAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryBetDetailsPageTotals.rebateAmount) }}</div>
+                  <div class="bets-cell history-total-cell">{{ formatMoney(dailySummaryBetDetailsPageTotals.resultAmount) }}</div>
+                  <div class="bets-cell history-total-cell">--</div>
+                  <div class="bets-cell history-total-cell">--</div>
+                </template>
+                <template v-else>
+                  <div class="bets-empty">暂无账户历史注单明细</div>
+                </template>
+              </div>
+            </template>
+            <template v-else-if="dailySummarySelectedDate">
               <div class="history-table history-table-detail">
                 <div class="bets-head">交易日期</div>
                 <div class="bets-head">彩券种类</div>
@@ -4431,12 +4689,80 @@ onBeforeUnmount(() => {
 
           <div
             v-if="
+              !(dailySummaryBetDetailsGame && dailySummaryBetDetailsError) &&
               !(dailySummarySelectedDate && dailySummaryGamesError) &&
               !dailySummaryError
             "
             class="mobile-history-list"
           >
-            <template v-if="dailySummarySelectedDate">
+            <template v-if="dailySummaryBetDetailsGame">
+              <template v-if="displayedDailySummaryBetDetails.length">
+                <article
+                  v-for="bet in displayedDailySummaryBetDetails"
+                  :key="`mobile-history-bet-${bet.orderNo}`"
+                  class="mobile-bet-card"
+                >
+                  <div class="mobile-bet-card-head">
+                    <strong>{{ bet.betType || '--' }}</strong>
+                    <span>{{ formatResultStatusLabel(bet.resultStatus) }}</span>
+                  </div>
+                  <div class="mobile-bet-card-sub">
+                    <span>期号：{{ bet.issueNo || '--' }}</span>
+                    <span>{{ formatDateTime(bet.createdAt) }}</span>
+                  </div>
+                  <div class="mobile-bet-detail">
+                    <template v-if="getBetResultDisplay(bet)">
+                      <div>{{ getBetResultDisplay(bet).detailSummary }}</div>
+                      <div v-if="getBetResultDisplay(bet).hasResult" class="mobile-bet-result-line">
+                        <span>结果：</span>
+                        <span
+                          v-for="(item, index) in getBetResultDisplay(bet).resultNumbers"
+                          :key="`${bet.orderNo || bet.issueNo || 'mobile-history-bet'}-${index}`"
+                          :class="{ 'is-hit': item.active }"
+                        >
+                          {{ item.value }}
+                        </span>
+                        <template v-if="getBetResultDisplay(bet).tail">
+                          <span>=</span>
+                          <strong>{{ getBetResultDisplay(bet).tail }}</strong>
+                        </template>
+                      </div>
+                    </template>
+                    <template v-else>{{ getBetDetailWithoutIssue(bet) }} @ {{ getBetOddsDisplay(bet) }}</template>
+                  </div>
+                  <div class="mobile-bet-amount-grid">
+                    <div>
+                      <span>金额</span>
+                      <strong>{{ bet.betAmount ?? '--' }}</strong>
+                    </div>
+                    <div>
+                      <span>有效</span>
+                      <strong>{{ bet.validAmount ?? '--' }}</strong>
+                    </div>
+                    <div>
+                      <span>派彩</span>
+                      <strong>{{ bet.payoutAmount ?? '--' }}</strong>
+                    </div>
+                    <div>
+                      <span>结果</span>
+                      <strong>{{ bet.resultAmount ?? '--' }}</strong>
+                    </div>
+                  </div>
+                  <div class="mobile-bet-card-foot">
+                    <span>订单：{{ bet.orderNo || '--' }}</span>
+                    <span>状态：{{ bet.status || '--' }}</span>
+                  </div>
+                </article>
+                <div class="mobile-bets-total">
+                  <span>本页统计：{{ dailySummaryBetDetailsPageTotals.count }}笔</span>
+                  <strong>金额 {{ formatMoney(dailySummaryBetDetailsPageTotals.betAmount) }}</strong>
+                  <strong>结果 {{ formatMoney(dailySummaryBetDetailsPageTotals.resultAmount) }}</strong>
+                </div>
+              </template>
+              <div v-else class="mobile-bets-empty">暂无账户历史注单明细</div>
+            </template>
+
+            <template v-else-if="dailySummarySelectedDate">
               <template v-if="displayedDailySummaryGames.length">
                 <article
                   v-for="item in displayedDailySummaryGames"
@@ -4491,6 +4817,33 @@ onBeforeUnmount(() => {
               </template>
               <div v-else class="mobile-bets-empty">暂无账户历史</div>
             </template>
+          </div>
+
+          <div
+            v-if="dailySummaryBetDetailsGame && !dailySummaryBetDetailsLoading && !dailySummaryBetDetailsError"
+            class="bets-view-pagination bets-view-pagination-footer"
+          >
+            <button
+              type="button"
+              :disabled="dailySummaryBetDetailsPage.page <= 0"
+              @click="changeDailySummaryBetDetailsPage(dailySummaryBetDetailsPage.page - 1)"
+            >
+              上一页
+            </button>
+            <span>
+              {{ (dailySummaryBetDetailsPage.page || 0) + 1 }} /
+              {{ dailySummaryBetDetailsPage.totalPages || 1 }}
+            </span>
+            <button
+              type="button"
+              :disabled="
+                dailySummaryBetDetailsPage.totalPages > 0 &&
+                dailySummaryBetDetailsPage.page >= dailySummaryBetDetailsPage.totalPages - 1
+              "
+              @click="changeDailySummaryBetDetailsPage(dailySummaryBetDetailsPage.page + 1)"
+            >
+              下一页
+            </button>
           </div>
 
           <div
