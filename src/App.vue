@@ -12,6 +12,7 @@ const STORAGE_KEY = 'member-login-session'
 const AGREEMENT_KEY = 'member-agreement-accepted'
 const DASHBOARD_CACHE_KEY = 'member-dashboard-cache'
 const ACTIVE_QUICK_ACTION_KEY = 'member-active-quick-action'
+const SELECTED_GAME_SESSION_KEY = 'member-selected-game-session'
 const NAV_SEARCH_REDIRECT_URL = 'https://www.bsrq8f.xyz'
 
 const agreementItems = [
@@ -166,6 +167,82 @@ const readDashboardCache = () => {
   } catch {
     return null
   }
+}
+
+const findGameIdInList = (gameList, gameId) => {
+  const normalizedGameId = Number(gameId || 0)
+  if (!normalizedGameId || !Array.isArray(gameList)) {
+    return null
+  }
+
+  const matchedGame = gameList.find((item) => Number(item.id) === normalizedGameId)
+  return matchedGame ? Number(matchedGame.id) : null
+}
+
+const readSelectedGameSession = () => {
+  try {
+    const raw = sessionStorage.getItem(SELECTED_GAME_SESSION_KEY)
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw)
+    const gameId = Number(parsed?.gameId || 0) || null
+    const ball = Number(parsed?.ball || 0) || null
+    return gameId ? { gameId, ball } : null
+  } catch {
+    return null
+  }
+}
+
+const saveSelectedGameSession = () => {
+  try {
+    const gameId = Number(selectedGameId.value || 0)
+    if (!gameId) {
+      sessionStorage.removeItem(SELECTED_GAME_SESSION_KEY)
+      return
+    }
+
+    sessionStorage.setItem(
+      SELECTED_GAME_SESSION_KEY,
+      JSON.stringify({
+        gameId,
+        ball: selectedBall.value,
+      }),
+    )
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+const resolveSelectedGameId = (gameList, preferredGameId = null) => {
+  if (!Array.isArray(gameList) || !gameList.length) {
+    return null
+  }
+
+  const sessionSelection = readSelectedGameSession()
+  const candidateIds = [sessionSelection?.gameId, preferredGameId, selectedGameId.value]
+
+  for (const candidateId of candidateIds) {
+    const matchedGameId = findGameIdInList(gameList, candidateId)
+    if (matchedGameId) {
+      return matchedGameId
+    }
+  }
+
+  return Number(gameList[0]?.id) || null
+}
+
+const clearSelectedGameSession = () => {
+  try {
+    sessionStorage.removeItem(SELECTED_GAME_SESSION_KEY)
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+const persistSelectedGameBeforeUnload = () => {
+  saveSelectedGameSession()
 }
 
 const getDefaultActiveQuickAction = () => (
@@ -968,6 +1045,7 @@ const saveDashboardCache = () => {
 
   try {
     localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(snapshot))
+    saveSelectedGameSession()
   } catch {
     // Ignore cache write failures so the UI stays responsive.
   }
@@ -983,10 +1061,7 @@ const restoreDashboardCache = () => {
   games.value = Array.isArray(snapshot.games) ? snapshot.games : []
   announcements.value = Array.isArray(snapshot.announcements) ? snapshot.announcements : []
   gamePage.value = snapshot.gamePage || gamePage.value
-  selectedGameId.value =
-    snapshot.selectedGameId && snapshot.games?.some((item) => item.id === snapshot.selectedGameId)
-      ? snapshot.selectedGameId
-      : snapshot.games?.[0]?.id || null
+  selectedGameId.value = resolveSelectedGameId(snapshot.games, snapshot.selectedGameId)
   drawResults.value = Array.isArray(snapshot.drawResults) ? snapshot.drawResults : []
   winResults.value = Array.isArray(snapshot.winResults) ? snapshot.winResults : []
   playSettings.value = Array.isArray(snapshot.playSettings) ? snapshot.playSettings : []
@@ -1001,9 +1076,11 @@ const restoreDashboardCache = () => {
   bets.value = Array.isArray(snapshot.bets) ? snapshot.bets : []
   betsPage.value = snapshot.betsPage || betsPage.value
 
+  const sessionSelection = readSelectedGameSession()
   const supportedBalls = gameBallConfig[Number(selectedGameId.value)] || [1]
-  selectedBall.value = supportedBalls.includes(snapshot.selectedBall)
-    ? snapshot.selectedBall
+  const preferredBall = sessionSelection?.ball ?? snapshot.selectedBall
+  selectedBall.value = supportedBalls.includes(preferredBall)
+    ? preferredBall
     : supportedBalls[0]
   startCountdown(selectedGame.value?.sealCountdownSeconds)
   return true
@@ -1247,9 +1324,13 @@ const selectedGame = computed(() => {
   if (!games.value.length) {
     return null
   }
-  return (
-    games.value.find((item) => item.id === selectedGameId.value) || games.value[0]
-  )
+
+  const matchedGameId = findGameIdInList(games.value, selectedGameId.value)
+  if (!matchedGameId) {
+    return games.value[0]
+  }
+
+  return games.value.find((item) => Number(item.id) === matchedGameId) || games.value[0]
 })
 
 const countdownText = computed(() => {
@@ -1921,6 +2002,7 @@ const redirectToLogin = (message = '登录已失效，请重新登录') => {
   localStorage.removeItem(AGREEMENT_KEY)
   localStorage.removeItem(DASHBOARD_CACHE_KEY)
   localStorage.removeItem(ACTIVE_QUICK_ACTION_KEY)
+  clearSelectedGameSession()
 
   loginResult.value = null
   currentUser.value = null
@@ -2136,9 +2218,7 @@ const loadDashboard = async (silent = false, refreshDetails = true) => {
 
     if (games.value.length) {
       const previousGameId = selectedGameId.value
-      selectedGameId.value =
-        games.value.find((item) => item.id === selectedGameId.value)?.id ||
-        games.value[0].id
+      selectedGameId.value = resolveSelectedGameId(games.value, previousGameId)
       {
         const supportedBalls = gameBallConfig[Number(selectedGameId.value)] || [1]
         if (!supportedBalls.includes(selectedBall.value)) {
@@ -3190,6 +3270,7 @@ const selectGame = async (gameId) => {
       ? selectedBall.value
       : nextSupportedBalls[0]
   }
+  saveDashboardCache()
   startCountdown(selectedGame.value?.sealCountdownSeconds)
   selectedBetPlay.value = ''
   betSlipItems.value = []
@@ -3408,6 +3489,7 @@ const selectBall = (ball) => {
   }
 
   selectedBall.value = nextBall
+  saveDashboardCache()
   betSubmitError.value = ''
   betSubmitMessage.value = ''
 }
@@ -3558,6 +3640,7 @@ const logout = () => {
   localStorage.removeItem(AGREEMENT_KEY)
   localStorage.removeItem(DASHBOARD_CACHE_KEY)
   localStorage.removeItem(ACTIVE_QUICK_ACTION_KEY)
+  clearSelectedGameSession()
   form.username = ''
   form.password = ''
   loginResult.value = null
@@ -3572,6 +3655,7 @@ const logout = () => {
 onMounted(async () => {
   syncMobileViewport()
   window.addEventListener('resize', syncMobileViewport)
+  window.addEventListener('beforeunload', persistSelectedGameBeforeUnload)
 
   if (!getNavSearchCode()) {
     window.location.replace(NAV_SEARCH_REDIRECT_URL)
@@ -3597,6 +3681,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncMobileViewport)
+  window.removeEventListener('beforeunload', persistSelectedGameBeforeUnload)
   window.clearInterval(countdownTimer)
   window.clearInterval(clockTimer)
   autoRefreshInProgress = false
