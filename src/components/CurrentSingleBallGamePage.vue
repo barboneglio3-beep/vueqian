@@ -169,7 +169,6 @@ const mobileTrendOpen = ref(false)
     </span>
 
     <span>期数：{{ selectedGame?.currentIssueNo || '--' }}</span>
-    <span>{{ selectedGame?.sealed ? '封盘中' : '未封盘' }}</span>
     <span>{{ currentIssueStatusText }}</span>
     <span>开奖时间：{{ formatDateTime(selectedGame?.currentDrawTime) }}</span>
   </div>

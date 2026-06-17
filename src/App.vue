@@ -32,8 +32,8 @@ const agreementItems = [
   '14.会员账号余额只做参考不做交收依据,一律以报表为准。',
 ]
 
-const quickActions = ['游戏投注', '未结明细', '期数结果', '账户历史', '个人资讯', '游戏规则']
-const mobileMenuActions = ['个人资讯', '游戏大厅', '游戏投注', '未结明细', '期数结果', '账户历史', '游戏规则']
+const quickActions = ['游戏投注', '未结明细', '期数结果', '账户历史', '个人资讯', '修改密码']
+const mobileMenuActions = ['个人资讯', '游戏大厅', '游戏投注', '未结明细', '期数结果', '账户历史', '修改密码']
 const gameRuleSections = [
   {
     id: 'australia-fantan',
@@ -215,19 +215,19 @@ const saveSelectedGameSession = () => {
   }
 }
 
-const resolveSelectedGameId = (gameList, preferredGameId = null) => {
+const pickStoredGameId = (gameList, fallbackGameId = null) => {
   if (!Array.isArray(gameList) || !gameList.length) {
     return null
   }
 
-  const sessionSelection = readSelectedGameSession()
-  const candidateIds = [sessionSelection?.gameId, preferredGameId, selectedGameId.value]
+  const sessionGameId = findGameIdInList(gameList, readSelectedGameSession()?.gameId)
+  if (sessionGameId) {
+    return sessionGameId
+  }
 
-  for (const candidateId of candidateIds) {
-    const matchedGameId = findGameIdInList(gameList, candidateId)
-    if (matchedGameId) {
-      return matchedGameId
-    }
+  const fallback = findGameIdInList(gameList, fallbackGameId)
+  if (fallback) {
+    return fallback
   }
 
   return Number(gameList[0]?.id) || null
@@ -242,6 +242,10 @@ const clearSelectedGameSession = () => {
 }
 
 const persistSelectedGameBeforeUnload = () => {
+  saveSelectedGameSession()
+}
+
+const persistSelectedGameOnPageHide = () => {
   saveSelectedGameSession()
 }
 
@@ -268,6 +272,15 @@ const form = reactive({
   password: '',
 })
 
+const changePasswordForm = reactive({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+})
+const changePasswordLoading = ref(false)
+const changePasswordError = ref('')
+const changePasswordSuccess = ref('')
+
 const systemConfig = ref({
   systemName: '联想',
   memberSiteTitle: '会员登录',
@@ -289,6 +302,7 @@ const normalizeLoginSession = (payload) => {
     token: source.token ?? '',
     expiresInSeconds: source.expiresInSeconds ?? null,
     expiresAtEpochSecond: source.expiresAtEpochSecond ?? null,
+    passwordChangeRequired: Boolean(source.passwordChangeRequired),
   }
 }
 
@@ -331,6 +345,10 @@ const getInitialView = (session) => {
     return 'login'
   }
 
+  if (session.passwordChangeRequired) {
+    return 'changePassword'
+  }
+
   try {
     return localStorage.getItem(AGREEMENT_KEY) === '1' ? 'dashboard' : 'agreement'
   } catch {
@@ -339,7 +357,9 @@ const getInitialView = (session) => {
 }
 
 const initialLoginResult = readStoredSession()
-const view = ref(getInitialView(initialLoginResult))
+const initialView = getInitialView(initialLoginResult)
+const view = ref(initialView)
+const changePasswordForced = ref(initialView === 'changePassword')
 const loading = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
@@ -387,6 +407,17 @@ const betsPage = ref({
   size: 6,
   totalPages: 0,
 })
+const pageSizeOptions = [6, 10, 20, 50, 100]
+const memberLedgerPageSizeOptions = [50, 100, 150, 200, 300]
+const sidebarUnsettledBets = ref([])
+const sidebarUnsettledBetsLoading = ref(false)
+const sidebarUnsettledBetsError = ref('')
+const sidebarUnsettledBetsPage = ref({
+  total: 0,
+  page: 0,
+  size: 6,
+  totalPages: 0,
+})
 const issueResults = ref([])
 const issueResultsLoading = ref(false)
 const issueResultsError = ref('')
@@ -395,6 +426,7 @@ const issueResultsFilters = reactive({
   startDate: '',
   endDate: '',
 })
+const issueResultsFollowTodayDate = ref('')
 const issueResultsPage = ref({
   total: 0,
   page: 0,
@@ -443,7 +475,7 @@ const memberBalanceLogsError = ref('')
 const memberBalanceLogsPage = ref({
   total: 0,
   page: 0,
-  size: 10,
+  size: 50,
   totalPages: 0,
 })
 const hoveredDailySummaryDate = ref('')
@@ -459,6 +491,8 @@ const selectedBall = ref(1)
 const countdownSeconds = ref(0)
 
 let countdownTimer = null
+let countdownDeadlineMs = 0
+let countdownServerSkewMs = 0
 let dashboardPollTimer = null
 let clockTimer = null
 let autoRefreshInProgress = false
@@ -467,6 +501,7 @@ let lastDefaultAutoRefreshAt = 0
 let winResultsRequestId = 0
 let drawResultsRequestId = 0
 let betsRequestId = 0
+let sidebarUnsettledBetsRequestId = 0
 let issueResultsRequestId = 0
 let playSettingsRequestId = 0
 let gameRulesRequestId = 0
@@ -481,6 +516,63 @@ let globalLoadingShownAt = 0
 const playSettingsPrefetchingGameIds = new Set()
 
 const getAuthToken = () => loginResult.value?.token || ''
+
+const isPasswordChangeRequired = () => {
+  return Boolean(
+    loginResult.value?.passwordChangeRequired || currentUser.value?.passwordChangeRequired,
+  )
+}
+
+const resetChangePasswordForm = () => {
+  changePasswordForm.oldPassword = ''
+  changePasswordForm.newPassword = ''
+  changePasswordForm.confirmPassword = ''
+}
+
+const persistLoginSession = () => {
+  if (!loginResult.value?.token) {
+    return
+  }
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(loginResult.value))
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+const redirectToChangePassword = () => {
+  stopAutoRefresh()
+  changePasswordForced.value = true
+  changePasswordError.value = ''
+  changePasswordSuccess.value = ''
+  resetChangePasswordForm()
+
+  if (loginResult.value) {
+    loginResult.value = {
+      ...loginResult.value,
+      passwordChangeRequired: true,
+    }
+    persistLoginSession()
+  }
+
+  view.value = 'changePassword'
+}
+
+const refreshCurrentUser = async () => {
+  const payload = await apiFetch('/api/member/current')
+  currentUser.value = payload.data || null
+
+  if (loginResult.value) {
+    loginResult.value = {
+      ...loginResult.value,
+      passwordChangeRequired: Boolean(currentUser.value?.passwordChangeRequired),
+    }
+    persistLoginSession()
+  }
+
+  return currentUser.value
+}
 
 const getUrlQueryValue = (key) => new URLSearchParams(window.location.search).get(key)?.trim() || ''
 const getNavSearchCode = () => getUrlQueryValue('navSearchCode')
@@ -621,6 +713,29 @@ const getWeekDateRange = (value = new Date(), weekOffset = 0) => {
   }
 }
 
+const getCalendarDate = (value = new Date()) => {
+  const date = value instanceof Date ? new Date(value) : new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return new Date()
+  }
+
+  date.setHours(12, 0, 0, 0)
+  return date
+}
+
+const getCalendarWeekDateRange = (value = new Date(), weekOffset = 0) => {
+  const date = getCalendarDate(value)
+  const currentDay = date.getDay()
+  const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay
+  const monday = addDays(date, mondayOffset + weekOffset * 7)
+  const sunday = addDays(monday, 6)
+
+  return {
+    startDate: formatDateInputValue(monday),
+    endDate: formatDateInputValue(sunday),
+  }
+}
+
 const formatAnnouncementCurrentTime = (value = new Date()) => {
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) {
@@ -725,6 +840,7 @@ const memberStatusText = computed(() => {
 const personalInfoCategoryLabelMap = {
   番: '番',
   '大小,單雙': '大小,单双',
+  '大小,单双': '大小,单双',
   大小单双: '大小单双',
   中: '中',
   念: '念',
@@ -733,14 +849,26 @@ const personalInfoCategoryLabelMap = {
   正: '正',
   角: '角',
   特码: '特码',
-  '特码大单、小双': '大小单双',
+  '特码大单、小双': '特码大单、小双',
+  特码大单小双: '特码大单、小双',
+  大小单双: '特码大单、小双',
 }
 
-const personalInfoCategoryOrder = ['番', '大小,单双', '中', '念', '通', '加', '正', '角', '特码', '大小单双']
+const personalInfoCategoryOrder = ['番', '大小,单双', '中', '念', '通', '加', '正', '角', '特码', '特码大单、小双']
 
 const getPersonalInfoCategoryLabel = (playName) => {
+  const text = normalizePlayName(playName)
+  const raw = String(playName || '').trim()
+
+  if (personalInfoCategoryLabelMap[raw]) {
+    return personalInfoCategoryLabelMap[raw]
+  }
+  if (personalInfoCategoryLabelMap[text]) {
+    return personalInfoCategoryLabelMap[text]
+  }
+
   const key = resolvePlayOddsKey(playName)
-  return personalInfoCategoryLabelMap[key] || key || String(playName || '').trim() || '--'
+  return personalInfoCategoryLabelMap[key] || personalInfoCategoryLabelMap[normalizePlayName(key)] || key || text || '--'
 }
 
 const formatLimitValue = (value) => {
@@ -1061,7 +1189,7 @@ const restoreDashboardCache = () => {
   games.value = Array.isArray(snapshot.games) ? snapshot.games : []
   announcements.value = Array.isArray(snapshot.announcements) ? snapshot.announcements : []
   gamePage.value = snapshot.gamePage || gamePage.value
-  selectedGameId.value = resolveSelectedGameId(snapshot.games, snapshot.selectedGameId)
+  selectedGameId.value = pickStoredGameId(snapshot.games, snapshot.selectedGameId)
   drawResults.value = Array.isArray(snapshot.drawResults) ? snapshot.drawResults : []
   winResults.value = Array.isArray(snapshot.winResults) ? snapshot.winResults : []
   playSettings.value = Array.isArray(snapshot.playSettings) ? snapshot.playSettings : []
@@ -1082,7 +1210,7 @@ const restoreDashboardCache = () => {
   selectedBall.value = supportedBalls.includes(preferredBall)
     ? preferredBall
     : supportedBalls[0]
-  startCountdown(selectedGame.value?.sealCountdownSeconds)
+  startCountdownFromGame(selectedGame.value)
   return true
 }
 
@@ -1100,7 +1228,7 @@ const queueRecentBetsRefresh = (gameId, page = 0) => {
       return
     }
 
-    void loadBets(gameId, page, true)
+    void loadSidebarUnsettledBets(gameId, page, true)
   }, 0)
 }
 
@@ -1191,6 +1319,10 @@ watch(activeQuickAction, (action) => {
   } catch {
     // Ignore storage errors; navigation still works for the current session.
   }
+})
+
+watch([selectedGameId, selectedBall], () => {
+  saveSelectedGameSession()
 })
 
 const betsPageTotals = computed(() => {
@@ -1611,6 +1743,14 @@ const resolvePlayOddsKey = (playName) => {
     return '特码'
   }
 
+  if (text === '特码') {
+    return '特码'
+  }
+
+  if (text === '特码大单、小双' || text === '特码大单小双') {
+    return '特码大单、小双'
+  }
+
   if (text.startsWith('特')) {
     return '特码大单、小双'
   }
@@ -1984,6 +2124,9 @@ const showNextAnnouncement = () => {
 
 const redirectToLogin = (message = '登录已失效，请重新登录') => {
   window.clearInterval(countdownTimer)
+  countdownTimer = null
+  countdownDeadlineMs = 0
+  countdownServerSkewMs = 0
   window.clearInterval(dashboardPollTimer)
   window.clearInterval(clockTimer)
   dashboardPollTimer = null
@@ -2020,6 +2163,9 @@ const redirectToLogin = (message = '登录已失效，请重新登录') => {
   bets.value = []
   betsLoading.value = false
   betsError.value = ''
+  sidebarUnsettledBets.value = []
+  sidebarUnsettledBetsLoading.value = false
+  sidebarUnsettledBetsError.value = ''
   dailySummary.value = []
   dailySummaryLoading.value = false
   dailySummaryError.value = ''
@@ -2052,6 +2198,11 @@ const redirectToLogin = (message = '登录已失效，请重新登录') => {
   betSubmitting.value = false
   successMessage.value = ''
   errorMessage.value = message
+  changePasswordForced.value = false
+  changePasswordLoading.value = false
+  changePasswordError.value = ''
+  changePasswordSuccess.value = ''
+  resetChangePasswordForm()
   view.value = 'login'
 }
 
@@ -2083,6 +2234,17 @@ const apiFetch = async (url, options = {}) => {
   if (shouldRedirectToLogin) {
     redirectToLogin(payloadMessage || '登录已失效，请重新登录')
     throw new Error(payloadMessage || '登录已失效，请重新登录')
+  }
+
+  const shouldRedirectToChangePassword =
+    url !== '/api/member/login' &&
+    url !== '/api/member/password/self' &&
+    Boolean(token) &&
+    (response.status === 409 || /请先修改初始化密码/.test(payloadMessage))
+
+  if (shouldRedirectToChangePassword) {
+    redirectToChangePassword()
+    throw new Error(payloadMessage || '请先修改初始化密码')
   }
 
   if (
@@ -2143,21 +2305,94 @@ const loadAnnouncements = async () => {
   }
 }
 
-const startCountdown = (seconds) => {
+const parseServerTimestamp = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : null
+}
+
+const resolveSealDeadlineMs = (game) => {
+  if (!game) {
+    return null
+  }
+
+  const explicitDeadline =
+    parseServerTimestamp(game.sealDeadlineAt) ||
+    parseServerTimestamp(game.sealEndTime) ||
+    parseServerTimestamp(game.sealTime) ||
+    parseServerTimestamp(game.closeTime)
+
+  if (explicitDeadline) {
+    return explicitDeadline
+  }
+
+  const serverTimeMs = parseServerTimestamp(game.serverTime)
+  const remainingSeconds = Number(game.sealCountdownSeconds)
+  if (serverTimeMs && Number.isFinite(remainingSeconds) && remainingSeconds >= 0) {
+    return serverTimeMs + remainingSeconds * 1000
+  }
+
+  if (Number.isFinite(remainingSeconds) && remainingSeconds > 0) {
+    return Date.now() + remainingSeconds * 1000
+  }
+
+  return null
+}
+
+const updateCountdownSecondsFromDeadline = () => {
+  if (!countdownDeadlineMs) {
+    countdownSeconds.value = 0
+    return
+  }
+
+  const nowServerEstimate = Date.now() + countdownServerSkewMs
+  const remaining = Math.max(0, Math.ceil((countdownDeadlineMs - nowServerEstimate) / 1000))
+  countdownSeconds.value = remaining
+
+  if (remaining <= 0) {
+    window.clearInterval(countdownTimer)
+    countdownTimer = null
+  }
+}
+
+const startCountdownFromGame = (game) => {
   window.clearInterval(countdownTimer)
-  countdownSeconds.value = Number(seconds) || 0
+  countdownTimer = null
+  countdownDeadlineMs = 0
+  countdownServerSkewMs = 0
+
+  if (!game || game.sealed) {
+    countdownSeconds.value = 0
+    return
+  }
+
+  const serverTimeMs = parseServerTimestamp(game.serverTime)
+  const deadlineMs = resolveSealDeadlineMs(game)
+  if (!deadlineMs) {
+    countdownSeconds.value = 0
+    return
+  }
+
+  countdownDeadlineMs = deadlineMs
+  countdownServerSkewMs = serverTimeMs ? serverTimeMs - Date.now() : 0
+  updateCountdownSecondsFromDeadline()
 
   if (countdownSeconds.value <= 0) {
     return
   }
 
-  countdownTimer = window.setInterval(() => {
-    if (countdownSeconds.value <= 0) {
-      window.clearInterval(countdownTimer)
-      return
-    }
-    countdownSeconds.value -= 1
-  }, 1000)
+  countdownTimer = window.setInterval(updateCountdownSecondsFromDeadline, 250)
+}
+
+const startCountdown = (seconds) => {
+  startCountdownFromGame({
+    sealed: Number(seconds) <= 0,
+    sealCountdownSeconds: seconds,
+    serverTime: new Date().toISOString(),
+  })
 }
 
 const loadDashboard = async (silent = false, refreshDetails = true) => {
@@ -2218,7 +2453,8 @@ const loadDashboard = async (silent = false, refreshDetails = true) => {
 
     if (games.value.length) {
       const previousGameId = selectedGameId.value
-      selectedGameId.value = resolveSelectedGameId(games.value, previousGameId)
+      const matchedCurrentGameId = findGameIdInList(games.value, previousGameId)
+      selectedGameId.value = matchedCurrentGameId || pickStoredGameId(games.value)
       {
         const supportedBalls = gameBallConfig[Number(selectedGameId.value)] || [1]
         if (!supportedBalls.includes(selectedBall.value)) {
@@ -2228,7 +2464,7 @@ const loadDashboard = async (silent = false, refreshDetails = true) => {
       if (!silent) {
         applyCachedGameViewData(selectedGameId.value)
       }
-      startCountdown(selectedGame.value?.sealCountdownSeconds)
+      startCountdownFromGame(selectedGame.value)
       saveDashboardCache()
       const shouldSilentRefreshPlaySettings = hasCachedPlaySettings(selectedGameId.value)
       const detailTasks = refreshDetails
@@ -2241,7 +2477,7 @@ const loadDashboard = async (silent = false, refreshDetails = true) => {
       if (silent) {
         await Promise.all(detailTasks)
         if (activeQuickAction.value === '游戏投注') {
-          queueRecentBetsRefresh(selectedGameId.value, betsPage.value.page)
+          queueRecentBetsRefresh(selectedGameId.value, sidebarUnsettledBetsPage.value.page)
         }
         queueMemberInfoPrefetch()
         queuePlaySettingsPrefetch(selectedGameId.value)
@@ -2393,6 +2629,68 @@ const loadBets = async (gameId, page = 0, silent = false) => {
   }
 }
 
+const loadSidebarUnsettledBets = async (gameId, page = 0, silent = false) => {
+  if (!gameId) {
+    sidebarUnsettledBets.value = []
+    sidebarUnsettledBetsError.value = ''
+    sidebarUnsettledBetsPage.value = {
+      ...sidebarUnsettledBetsPage.value,
+      total: 0,
+      page: 0,
+      totalPages: 0,
+    }
+    return
+  }
+
+  const requestId = ++sidebarUnsettledBetsRequestId
+  const businessDayRange = getBusinessDayRange()
+  const query = new URLSearchParams({
+    page: String(page),
+    size: String(sidebarUnsettledBetsPage.value.size),
+    gameId: String(gameId),
+    status: '未结算',
+    startAt: businessDayRange.startAt,
+    endAt: businessDayRange.endAt,
+  })
+
+  if (!silent) {
+    sidebarUnsettledBetsLoading.value = true
+    sidebarUnsettledBetsError.value = ''
+  }
+
+  try {
+    const payload = await apiFetch(`/api/bets?${query.toString()}`)
+    const pageData = payload.data || payload
+    const betList =
+      pageData.records || pageData.content || pageData.list || pageData.items || []
+
+    if (requestId !== sidebarUnsettledBetsRequestId) {
+      return
+    }
+
+    sidebarUnsettledBets.value = Array.isArray(betList) ? betList : []
+    sidebarUnsettledBetsPage.value = {
+      total: pageData.total || 0,
+      page: pageData.page || 0,
+      size: pageData.size || sidebarUnsettledBetsPage.value.size,
+      totalPages: pageData.totalPages || 0,
+    }
+  } catch (error) {
+    if (requestId !== sidebarUnsettledBetsRequestId) {
+      return
+    }
+
+    if (!silent) {
+      sidebarUnsettledBets.value = []
+      sidebarUnsettledBetsError.value = error instanceof Error ? error.message : '未结注单加载失败'
+    }
+  } finally {
+    if (!silent && requestId === sidebarUnsettledBetsRequestId) {
+      sidebarUnsettledBetsLoading.value = false
+    }
+  }
+}
+
 const loadDailySummary = async (gameId, page = 0, silent = false) => {
   const query = new URLSearchParams({
     page: String(page),
@@ -2489,6 +2787,7 @@ const loadDailySummaryBetDetails = async (gameId, tradeDate, page = 0, silent = 
     gameId: String(gameId),
     startAt: businessDayRange.startAt,
     endAt: businessDayRange.endAt,
+    status: '已结算',
   })
 
   if (!silent) {
@@ -2847,7 +3146,7 @@ const stopAutoRefresh = () => {
   dashboardPollTimer = null
 }
 
-const refreshActiveView = async () => {
+const refreshActiveView = async (isManual = false) => {
   if (activeQuickAction.value === '游戏大厅') {
     void loadAnnouncements()
     await loadDashboard(true, false)
@@ -2860,20 +3159,35 @@ const refreshActiveView = async () => {
     }
 
     const refreshGameId = selectedGameId.value
+
+    if (isManual) {
+      await Promise.all([
+        loadAnnouncements(),
+        loadDashboard(true, true),
+      ])
+      queueRecentBetsRefresh(refreshGameId, sidebarUnsettledBetsPage.value.page)
+      return
+    }
+
     await Promise.all([
       loadDrawResults(refreshGameId, true),
       loadWinResults(refreshGameId, true),
+      loadDashboard(true, false),
     ])
 
     autoRefreshTickCount += 1
     if (autoRefreshTickCount % DASHBOARD_SHELL_REFRESH_EVERY === 0) {
       void loadAnnouncements()
-      void loadDashboard(true, false)
     }
     return
   }
 
   if (activeQuickAction.value === '未结明细') {
+    if (!isManual) {
+      return
+    }
+
+    await loadBets(betsFilters.gameId, betsPage.value.page, false)
     return
   }
 
@@ -2881,24 +3195,59 @@ const refreshActiveView = async () => {
     if (!selectedGameId.value) {
       return
     }
-    await loadIssueResults(selectedGameId.value, issueResultsPage.value.page, true)
+    await loadIssueResults(selectedGameId.value, issueResultsPage.value.page, !isManual)
     return
   }
 
   if (activeQuickAction.value === '账户历史') {
+    if (!isManual) {
+      return
+    }
+
+    if (dailySummaryBetDetailsGame.value && dailySummarySelectedDate.value) {
+      await loadDailySummaryBetDetails(
+        dailySummaryBetDetailsGame.value.gameId,
+        dailySummarySelectedDate.value,
+        dailySummaryBetDetailsPage.value.page,
+        false,
+      )
+      return
+    }
+
+    if (dailySummarySelectedDate.value) {
+      await loadDailySummaryGames(dailySummarySelectedDate.value, false)
+      return
+    }
+
+    await loadDailySummary(null, dailySummaryPage.value.page, false)
     return
   }
 
   if (activeQuickAction.value === '个人资讯') {
     if (memberInfoTab.value === 'ledger') {
-      await Promise.all([loadMemberInfo(true), loadMemberBalanceLogs(memberBalanceLogsPage.value.page, true)])
+      await Promise.all([
+        loadMemberInfo(!isManual),
+        loadMemberBalanceLogs(memberBalanceLogsPage.value.page, !isManual),
+      ])
       return
     }
-    await loadMemberInfo(true)
+    await loadMemberInfo(!isManual)
+    return
+  }
+
+  if (activeQuickAction.value === '修改密码') {
     return
   }
 
   if (activeQuickAction.value === '游戏规则') {
+    if (!isManual) {
+      return
+    }
+
+    const targetGameId = selectedRulesGameId.value || selectedGameId.value || games.value[0]?.id || null
+    if (targetGameId) {
+      await loadGameRules(targetGameId, false)
+    }
     return
   }
 
@@ -2943,6 +3292,111 @@ const startAutoRefresh = () => {
   }, GAME_BETTING_REFRESH_INTERVAL_MS)
 }
 
+const enterDashboard = async () => {
+  if (isPasswordChangeRequired()) {
+    redirectToChangePassword()
+    return
+  }
+
+  const defaultAction = getDefaultActiveQuickAction()
+  view.value = 'dashboard'
+  activeQuickAction.value = defaultAction
+  mobileLobbyOpen.value = defaultAction === '游戏大厅'
+  await loadDashboard()
+  startAutoRefresh()
+}
+
+const bootstrapDashboardSession = async () => {
+  const restoredAction = readStoredActiveQuickAction()
+  activeQuickAction.value = restoredAction
+  mobileLobbyOpen.value = restoredAction === '游戏大厅'
+  restoreDashboardCache()
+  await loadDashboard()
+  if (restoredAction !== '游戏投注' && restoredAction !== '游戏大厅') {
+    await selectQuickAction(restoredAction)
+  }
+  queueMemberInfoPrefetch()
+  startAutoRefresh()
+}
+
+const ensurePasswordChanged = async () => {
+  if (!loginResult.value?.token) {
+    return false
+  }
+
+  if (loginResult.value.passwordChangeRequired) {
+    redirectToChangePassword()
+    return false
+  }
+
+  try {
+    await refreshCurrentUser()
+  } catch {
+    return view.value !== 'changePassword'
+  }
+
+  if (isPasswordChangeRequired()) {
+    redirectToChangePassword()
+    return false
+  }
+
+  return true
+}
+
+const submitChangePassword = async () => {
+  changePasswordError.value = ''
+  changePasswordSuccess.value = ''
+
+  if (!changePasswordForm.oldPassword.trim() || !changePasswordForm.newPassword.trim()) {
+    changePasswordError.value = '请输入旧密码和新密码'
+    return
+  }
+
+  if (changePasswordForm.newPassword !== changePasswordForm.confirmPassword) {
+    changePasswordError.value = '两次输入的新密码不一致'
+    return
+  }
+
+  if (changePasswordForm.oldPassword === changePasswordForm.newPassword) {
+    changePasswordError.value = '新密码不能与旧密码相同'
+    return
+  }
+
+  changePasswordLoading.value = true
+
+  try {
+    await apiFetch('/api/member/password/self', {
+      method: 'POST',
+      body: JSON.stringify({
+        oldPassword: changePasswordForm.oldPassword,
+        newPassword: changePasswordForm.newPassword,
+      }),
+    })
+
+    resetChangePasswordForm()
+    const user = await refreshCurrentUser()
+    if (user?.passwordChangeRequired) {
+      throw new Error('密码修改未生效，请重试')
+    }
+
+    if (changePasswordForced.value) {
+      changePasswordForced.value = false
+      if (localStorage.getItem(AGREEMENT_KEY) === '1') {
+        await enterDashboard()
+      } else {
+        view.value = 'agreement'
+      }
+      return
+    }
+
+    changePasswordSuccess.value = '密码修改成功'
+  } catch (error) {
+    changePasswordError.value = error instanceof Error ? error.message : '密码修改失败'
+  } finally {
+    changePasswordLoading.value = false
+  }
+}
+
 const handleSubmit = async () => {
   errorMessage.value = ''
   successMessage.value = ''
@@ -2977,11 +3431,18 @@ const handleSubmit = async () => {
 
     loginResult.value = session
     successMessage.value = data.message || '登录成功'
-    view.value = 'agreement'
     localStorage.removeItem(AGREEMENT_KEY)
     localStorage.removeItem(DASHBOARD_CACHE_KEY)
+    persistLoginSession()
+    resetChangePasswordForm()
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
+    if (session.passwordChangeRequired) {
+      changePasswordForced.value = true
+      view.value = 'changePassword'
+    } else {
+      changePasswordForced.value = false
+      view.value = 'agreement'
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : '登录失败，请稍后重试'
     if (/导航搜索码.*(无效|停用)|导航页入口|navSearchCode|navLoginEntryId/i.test(message)) {
@@ -2996,22 +3457,26 @@ const handleSubmit = async () => {
 
 const agreeProtocol = async () => {
   localStorage.setItem(AGREEMENT_KEY, '1')
-  const defaultAction = getDefaultActiveQuickAction()
-  view.value = 'dashboard'
-  activeQuickAction.value = defaultAction
-  mobileLobbyOpen.value = defaultAction === '游戏大厅'
-  await loadDashboard()
-  startAutoRefresh()
+  await enterDashboard()
 }
 
 const rejectProtocol = () => {
   stopAutoRefresh()
   localStorage.removeItem(AGREEMENT_KEY)
   successMessage.value = ''
+  if (loginResult.value?.token) {
+    logout()
+    return
+  }
   view.value = 'login'
 }
 
 const backToAgreement = () => {
+  if (isPasswordChangeRequired()) {
+    redirectToChangePassword()
+    return
+  }
+
   stopAutoRefresh()
   view.value = 'agreement'
 }
@@ -3022,6 +3487,13 @@ const changePlayMode = (mode) => {
 
 const selectMemberInfoTab = async (tab) => {
   memberInfoTab.value = tab
+  if (tab === 'rules') {
+    const targetGameId = selectedRulesGameId.value || selectedGameId.value || games.value[0]?.id || null
+    if (targetGameId) {
+      await loadGameRules(targetGameId, false)
+    }
+    return
+  }
   if (tab === 'ledger' && !memberBalanceLogs.value.length) {
     await loadMemberBalanceLogs(0, false)
   }
@@ -3038,47 +3510,79 @@ const changeMemberBalanceLogsPage = async (nextPage) => {
   await loadMemberBalanceLogs(nextPage, false)
 }
 
+const changeMemberBalanceLogsPageSize = async (value) => {
+  const nextSize = Number(value)
+  if (!memberLedgerPageSizeOptions.includes(nextSize) || nextSize === memberBalanceLogsPage.value.size) {
+    return
+  }
+
+  memberBalanceLogsPage.value = {
+    ...memberBalanceLogsPage.value,
+    size: nextSize,
+    page: 0,
+  }
+  await loadMemberBalanceLogs(0, false)
+}
+
 const applyIssueResultsFilters = async () => {
+  issueResultsFollowTodayDate.value = ''
   issueResults.value = []
   issueResultsError.value = ''
   await loadIssueResults(selectedGameId.value, 0, false)
 }
 
-const setIssueResultsDateRange = async (startDate, endDate) => {
+const handleIssueResultsDateChange = async () => {
+  issueResultsFollowTodayDate.value = ''
+  await applyIssueResultsFilters()
+}
+
+const setIssueResultsDateRange = async (startDate, endDate, followToday = false) => {
   issueResultsFilters.startDate = startDate
   issueResultsFilters.endDate = endDate
+  issueResultsFollowTodayDate.value = followToday && startDate === endDate ? startDate : ''
   issueResults.value = []
   issueResultsError.value = ''
   await loadIssueResults(selectedGameId.value, 0, false)
 }
 
 const ensureIssueResultsDefaultFilters = () => {
-  if (issueResultsFilters.startDate && issueResultsFilters.endDate) {
+  const today = formatDateInputValue(getCalendarDate())
+  if (!issueResultsFilters.startDate && !issueResultsFilters.endDate) {
+    issueResultsFilters.startDate = today
+    issueResultsFilters.endDate = today
+    issueResultsFollowTodayDate.value = today
     return
   }
 
-  const today = formatDateInputValue(getBusinessDate())
-  issueResultsFilters.startDate = today
-  issueResultsFilters.endDate = today
+  if (
+    issueResultsFollowTodayDate.value &&
+    issueResultsFilters.startDate === issueResultsFollowTodayDate.value &&
+    issueResultsFilters.endDate === issueResultsFollowTodayDate.value &&
+    today !== issueResultsFollowTodayDate.value
+  ) {
+    issueResultsFilters.startDate = today
+    issueResultsFilters.endDate = today
+    issueResultsFollowTodayDate.value = today
+  }
 }
 
 const setIssueResultsToday = async () => {
-  const today = formatDateInputValue(getBusinessDate())
-  await setIssueResultsDateRange(today, today)
+  const today = formatDateInputValue(getCalendarDate())
+  await setIssueResultsDateRange(today, today, true)
 }
 
 const setIssueResultsYesterday = async () => {
-  const yesterday = formatDateInputValue(addDays(getBusinessDate(), -1))
+  const yesterday = formatDateInputValue(addDays(getCalendarDate(), -1))
   await setIssueResultsDateRange(yesterday, yesterday)
 }
 
 const setIssueResultsThisWeek = async () => {
-  const range = getWeekDateRange(new Date(), 0)
+  const range = getCalendarWeekDateRange(new Date(), 0)
   await setIssueResultsDateRange(range.startDate, range.endDate)
 }
 
 const setIssueResultsLastWeek = async () => {
-  const range = getWeekDateRange(new Date(), -1)
+  const range = getCalendarWeekDateRange(new Date(), -1)
   await setIssueResultsDateRange(range.startDate, range.endDate)
 }
 
@@ -3086,6 +3590,7 @@ const resetIssueResultsFilters = async () => {
   issueResultsFilters.issueNo = ''
   issueResultsFilters.startDate = ''
   issueResultsFilters.endDate = ''
+  issueResultsFollowTodayDate.value = ''
   ensureIssueResultsDefaultFilters()
   issueResults.value = []
   issueResultsError.value = ''
@@ -3206,6 +3711,13 @@ const selectQuickAction = async (action) => {
 
   if (action === '个人资讯') {
     seedMemberInfoFromCurrentGame()
+    if (memberInfoTab.value === 'rules') {
+      const targetGameId = selectedRulesGameId.value || selectedGameId.value || games.value[0]?.id || null
+      if (targetGameId) {
+        await loadGameRules(targetGameId, false)
+      }
+      return
+    }
     if (memberInfoPlaySettings.value.length) {
       memberInfoError.value = ''
       if (memberInfoTab.value === 'ledger' && !memberBalanceLogs.value.length) {
@@ -3219,6 +3731,14 @@ const selectQuickAction = async (action) => {
       return
     }
     await loadMemberInfo(false)
+    return
+  }
+
+  if (action === '修改密码') {
+    changePasswordForced.value = false
+    changePasswordError.value = ''
+    changePasswordSuccess.value = ''
+    resetChangePasswordForm()
     return
   }
 
@@ -3271,7 +3791,8 @@ const selectGame = async (gameId) => {
       : nextSupportedBalls[0]
   }
   saveDashboardCache()
-  startCountdown(selectedGame.value?.sealCountdownSeconds)
+  saveSelectedGameSession()
+  startCountdownFromGame(selectedGame.value)
   selectedBetPlay.value = ''
   betSlipItems.value = []
   batchBetAmount.value = ''
@@ -3328,6 +3849,23 @@ const selectGame = async (gameId) => {
   queuePlaySettingsPrefetch(gameId)
 }
 
+const changeSidebarUnsettledBetsPage = async (nextPage) => {
+  if (nextPage < 0) {
+    return
+  }
+  if (
+    sidebarUnsettledBetsPage.value.totalPages > 0 &&
+    nextPage >= sidebarUnsettledBetsPage.value.totalPages
+  ) {
+    return
+  }
+  if (!selectedGameId.value) {
+    return
+  }
+
+  await loadSidebarUnsettledBets(selectedGameId.value, nextPage, false)
+}
+
 const changeBetsPage = async (nextPage) => {
   if (nextPage < 0) {
     return
@@ -3337,6 +3875,20 @@ const changeBetsPage = async (nextPage) => {
   }
 
   await loadBets(null, nextPage, false)
+}
+
+const changeBetsPageSize = async (value) => {
+  const nextSize = Number(value)
+  if (!pageSizeOptions.includes(nextSize) || nextSize === betsPage.value.size) {
+    return
+  }
+
+  betsPage.value = {
+    ...betsPage.value,
+    size: nextSize,
+    page: 0,
+  }
+  await loadBets(null, 0, false)
 }
 
 const applyBetsFilters = async () => {
@@ -3362,6 +3914,20 @@ const changeDailySummaryPage = async (nextPage) => {
   await loadDailySummary(null, nextPage, false)
 }
 
+const changeDailySummaryPageSize = async (value) => {
+  const nextSize = Number(value)
+  if (!pageSizeOptions.includes(nextSize) || nextSize === dailySummaryPage.value.size) {
+    return
+  }
+
+  dailySummaryPage.value = {
+    ...dailySummaryPage.value,
+    size: nextSize,
+    page: 0,
+  }
+  await loadDailySummary(null, 0, false)
+}
+
 const changeDailySummaryBetDetailsPage = async (nextPage) => {
   if (nextPage < 0) {
     return
@@ -3380,6 +3946,30 @@ const changeDailySummaryBetDetailsPage = async (nextPage) => {
     dailySummaryBetDetailsGame.value.gameId,
     dailySummarySelectedDate.value,
     nextPage,
+    false,
+  )
+}
+
+const changeDailySummaryBetDetailsPageSize = async (value) => {
+  const nextSize = Number(value)
+  if (!pageSizeOptions.includes(nextSize) || nextSize === dailySummaryBetDetailsPage.value.size) {
+    return
+  }
+
+  dailySummaryBetDetailsPage.value = {
+    ...dailySummaryBetDetailsPage.value,
+    size: nextSize,
+    page: 0,
+  }
+
+  if (!dailySummaryBetDetailsGame.value || !dailySummarySelectedDate.value) {
+    return
+  }
+
+  await loadDailySummaryBetDetails(
+    dailySummaryBetDetailsGame.value.gameId,
+    dailySummarySelectedDate.value,
+    0,
     false,
   )
 }
@@ -3474,9 +4064,13 @@ const ensureDailySummaryDefaultFilters = () => {
 }
 
 const refreshDashboard = async () => {
+  if (manualRefreshLoading.value) {
+    return
+  }
+
   manualRefreshLoading.value = true
   try {
-    await refreshActiveView()
+    await refreshActiveView(true)
   } finally {
     manualRefreshLoading.value = false
   }
@@ -3609,7 +4203,7 @@ const submitBet = async () => {
     selectedBetPlay.value = ''
     batchBetAmount.value = ''
     await Promise.all([
-      loadBets(selectedGameId.value, 0, false),
+      loadSidebarUnsettledBets(selectedGameId.value, 0, false),
       apiFetch('/api/member/current').then((result) => {
         currentUser.value = result.data || currentUser.value
       }),
@@ -3641,6 +4235,11 @@ const logout = () => {
   localStorage.removeItem(DASHBOARD_CACHE_KEY)
   localStorage.removeItem(ACTIVE_QUICK_ACTION_KEY)
   clearSelectedGameSession()
+  changePasswordForced.value = false
+  changePasswordLoading.value = false
+  changePasswordError.value = ''
+  changePasswordSuccess.value = ''
+  resetChangePasswordForm()
   form.username = ''
   form.password = ''
   loginResult.value = null
@@ -3656,6 +4255,7 @@ onMounted(async () => {
   syncMobileViewport()
   window.addEventListener('resize', syncMobileViewport)
   window.addEventListener('beforeunload', persistSelectedGameBeforeUnload)
+  window.addEventListener('pagehide', persistSelectedGameOnPageHide)
 
   if (!getNavSearchCode()) {
     window.location.replace(NAV_SEARCH_REDIRECT_URL)
@@ -3664,24 +4264,35 @@ onMounted(async () => {
 
   await loadSystemConfigs()
   startAnnouncementClock()
-  if (loginResult.value && localStorage.getItem(AGREEMENT_KEY) === '1') {
-    view.value = 'dashboard'
-    const restoredAction = readStoredActiveQuickAction()
-    activeQuickAction.value = restoredAction
-    mobileLobbyOpen.value = restoredAction === '游戏大厅'
-    restoreDashboardCache()
-    await loadDashboard()
-    if (restoredAction !== '游戏投注' && restoredAction !== '游戏大厅') {
-      await selectQuickAction(restoredAction)
+
+  if (loginResult.value) {
+    if (loginResult.value.passwordChangeRequired) {
+      changePasswordForced.value = true
+      view.value = 'changePassword'
+      return
     }
-    queueMemberInfoPrefetch()
-    startAutoRefresh()
+
+    const canUseDashboard = await ensurePasswordChanged()
+    if (!canUseDashboard || view.value === 'changePassword') {
+      return
+    }
+
+    if (localStorage.getItem(AGREEMENT_KEY) === '1') {
+      view.value = 'dashboard'
+      await bootstrapDashboardSession()
+      return
+    }
+
+    if (view.value !== 'agreement') {
+      view.value = 'agreement'
+    }
   }
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncMobileViewport)
   window.removeEventListener('beforeunload', persistSelectedGameBeforeUnload)
+  window.removeEventListener('pagehide', persistSelectedGameOnPageHide)
   window.clearInterval(countdownTimer)
   window.clearInterval(clockTimer)
   autoRefreshInProgress = false
@@ -3770,6 +4381,68 @@ onBeforeUnmount(() => {
         <button type="button" @click="agreeProtocol">同意</button>
         <button type="button" @click="rejectProtocol">不同意</button>
       </div>
+    </section>
+  </main>
+
+  <main v-else-if="view === 'changePassword'" class="change-password-page">
+    <section class="change-password-shell">
+      <div class="change-password-brand">{{ systemNameText }}</div>
+
+      <section class="change-password-card">
+        <h1>{{ changePasswordForced ? '修改初始化密码' : '修改密码' }}</h1>
+        <p v-if="changePasswordForced" class="change-password-tip">
+          首次登录请先修改初始化密码，完成后方可使用会员功能。
+        </p>
+
+        <form class="change-password-form" @submit.prevent="submitChangePassword">
+          <label class="change-password-field">
+            <span>旧密码</span>
+            <input
+              v-model="changePasswordForm.oldPassword"
+              type="password"
+              autocomplete="current-password"
+              placeholder="请输入旧密码"
+            />
+          </label>
+          <label class="change-password-field">
+            <span>新密码</span>
+            <input
+              v-model="changePasswordForm.newPassword"
+              type="password"
+              autocomplete="new-password"
+              placeholder="请输入新密码"
+            />
+          </label>
+          <label class="change-password-field">
+            <span>确认新密码</span>
+            <input
+              v-model="changePasswordForm.confirmPassword"
+              type="password"
+              autocomplete="new-password"
+              placeholder="请再次输入新密码"
+            />
+          </label>
+
+          <p v-if="changePasswordError" class="change-password-message is-error">{{ changePasswordError }}</p>
+          <p v-else-if="changePasswordSuccess" class="change-password-message is-success">
+            {{ changePasswordSuccess }}
+          </p>
+
+          <div class="change-password-actions">
+            <button type="submit" class="change-password-submit" :disabled="changePasswordLoading">
+              {{ changePasswordLoading ? '提交中...' : '确认修改' }}
+            </button>
+            <button
+              v-if="changePasswordForced"
+              type="button"
+              class="change-password-logout"
+              @click="rejectProtocol"
+            >
+              退出登录
+            </button>
+          </div>
+        </form>
+      </section>
     </section>
   </main>
 
@@ -3955,7 +4628,9 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="sidebar-actions">
-          <button type="button" @click="refreshDashboard">刷新</button>
+          <button type="button" :disabled="manualRefreshLoading" @click="refreshDashboard">
+            {{ manualRefreshLoading ? '刷新中...' : '刷新' }}
+          </button>
           <button type="button" @click="backToAgreement">协议</button>
           <button type="button" @click="logout">退出</button>
         </div>
@@ -4054,19 +4729,21 @@ onBeforeUnmount(() => {
         </section>
 
         <div class="bill-card">
-          <h3>最近注单</h3>
+          <h3>未结注单</h3>
 
-          <p v-if="betsError" class="bill-message is-error">{{ betsError }}</p>
-          <p v-else-if="betsLoading && !displayedBets.length" class="bill-message">未结明细加载中...</p>
+          <p v-if="sidebarUnsettledBetsError" class="bill-message is-error">{{ sidebarUnsettledBetsError }}</p>
+          <p v-else-if="sidebarUnsettledBetsLoading && !sidebarUnsettledBets.length" class="bill-message">
+            未结注单加载中...
+          </p>
 
-          <template v-if="!betsError">
+          <template v-if="!sidebarUnsettledBetsError">
             <div class="bill-table">
               <div class="bill-head">游戏</div>
-              <div class="bill-head">未结明细</div>
+              <div class="bill-head">注单明细</div>
               <div class="bill-head">赔率</div>
               <div class="bill-head">金额</div>
-              <template v-if="displayedBets.length">
-                <template v-for="bet in displayedBets" :key="bet.orderNo">
+              <template v-if="sidebarUnsettledBets.length">
+                <template v-for="bet in sidebarUnsettledBets" :key="bet.orderNo">
                   <div class="bill-cell bill-type-cell">
                     <span class="bill-type-name">{{ bet.gameName || selectedGame?.gameName || '--' }}</span>
                     <span class="bill-type-issue">{{ bet.issueNo || '--' }}</span>
@@ -4087,16 +4764,16 @@ onBeforeUnmount(() => {
             <div class="bill-pagination">
               <button
                 type="button"
-                :disabled="betsPage.page <= 0"
-                @click="changeBetsPage(betsPage.page - 1)"
+                :disabled="sidebarUnsettledBetsPage.page <= 0"
+                @click="changeSidebarUnsettledBetsPage(sidebarUnsettledBetsPage.page - 1)"
               >
                 上一页
               </button>
-              <span>{{ (betsPage.page || 0) + 1 }} / {{ betsPage.totalPages || 1 }}</span>
+              <span>{{ (sidebarUnsettledBetsPage.page || 0) + 1 }} / {{ sidebarUnsettledBetsPage.totalPages || 1 }}</span>
               <button
                 type="button"
-                :disabled="betsPage.totalPages > 0 && betsPage.page >= betsPage.totalPages - 1"
-                @click="changeBetsPage(betsPage.page + 1)"
+                :disabled="sidebarUnsettledBetsPage.totalPages > 0 && sidebarUnsettledBetsPage.page >= sidebarUnsettledBetsPage.totalPages - 1"
+                @click="changeSidebarUnsettledBetsPage(sidebarUnsettledBetsPage.page + 1)"
               >
                 下一页
               </button>
@@ -4262,6 +4939,14 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-if="!betsLoading && !betsError" class="bets-view-pagination bets-view-pagination-footer">
+            <label class="page-size-field">
+              <span>每页</span>
+              <select :value="betsPage.size" @change="changeBetsPageSize($event.target.value)">
+                <option v-for="size in pageSizeOptions" :key="`bets-size-${size}`" :value="size">
+                  {{ size }}条
+                </option>
+              </select>
+            </label>
             <button
               type="button"
               :disabled="betsPage.page <= 0"
@@ -4302,11 +4987,11 @@ onBeforeUnmount(() => {
             </label>
             <label class="issue-results-toolbar-field">
               <span>开始:</span>
-              <input v-model="issueResultsFilters.startDate" type="date" @change="applyIssueResultsFilters" />
+              <input v-model="issueResultsFilters.startDate" type="date" @change="handleIssueResultsDateChange" />
             </label>
             <label class="issue-results-toolbar-field">
               <span>结束:</span>
-              <input v-model="issueResultsFilters.endDate" type="date" @change="applyIssueResultsFilters" />
+              <input v-model="issueResultsFilters.endDate" type="date" @change="handleIssueResultsDateChange" />
             </label>
             <button type="button" class="issue-results-toolbar-button" @click="applyIssueResultsFilters">搜索</button>
             <button type="button" class="issue-results-toolbar-button" @click="setIssueResultsToday">今日</button>
@@ -4908,6 +5593,17 @@ onBeforeUnmount(() => {
             v-if="dailySummaryBetDetailsGame && !dailySummaryBetDetailsLoading && !dailySummaryBetDetailsError"
             class="bets-view-pagination bets-view-pagination-footer"
           >
+            <label class="page-size-field">
+              <span>每页</span>
+              <select
+                :value="dailySummaryBetDetailsPage.size"
+                @change="changeDailySummaryBetDetailsPageSize($event.target.value)"
+              >
+                <option v-for="size in pageSizeOptions" :key="`history-detail-size-${size}`" :value="size">
+                  {{ size }}条
+                </option>
+              </select>
+            </label>
             <button
               type="button"
               :disabled="dailySummaryBetDetailsPage.page <= 0"
@@ -4935,6 +5631,14 @@ onBeforeUnmount(() => {
             v-if="!dailySummarySelectedDate && !dailySummaryLoading && !dailySummaryError"
             class="bets-view-pagination bets-view-pagination-footer"
           >
+            <label class="page-size-field">
+              <span>每页</span>
+              <select :value="dailySummaryPage.size" @change="changeDailySummaryPageSize($event.target.value)">
+                <option v-for="size in pageSizeOptions" :key="`history-size-${size}`" :value="size">
+                  {{ size }}条
+                </option>
+              </select>
+            </label>
             <button
               type="button"
               :disabled="dailySummaryPage.page <= 0"
@@ -4950,6 +5654,52 @@ onBeforeUnmount(() => {
             >
               下一页
             </button>
+          </div>
+        </section>
+
+        <section v-else-if="activeQuickAction === '修改密码'" class="bets-view dashboard-change-password-view">
+          <div class="dashboard-change-password-shell">
+            <section class="dashboard-change-password-card">
+              <div class="dashboard-change-password-title">修改密码</div>
+              <form class="change-password-form change-password-form-inline" @submit.prevent="submitChangePassword">
+                <label class="change-password-field">
+                  <span>旧密码</span>
+                  <input
+                    v-model="changePasswordForm.oldPassword"
+                    type="password"
+                    autocomplete="current-password"
+                    placeholder="请输入旧密码"
+                  />
+                </label>
+                <label class="change-password-field">
+                  <span>新密码</span>
+                  <input
+                    v-model="changePasswordForm.newPassword"
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="请输入新密码"
+                  />
+                </label>
+                <label class="change-password-field">
+                  <span>确认新密码</span>
+                  <input
+                    v-model="changePasswordForm.confirmPassword"
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="请再次输入新密码"
+                  />
+                </label>
+                <p v-if="changePasswordError" class="change-password-message is-error">{{ changePasswordError }}</p>
+                <p v-else-if="changePasswordSuccess" class="change-password-message is-success">
+                  {{ changePasswordSuccess }}
+                </p>
+                <div class="change-password-actions">
+                  <button type="submit" class="change-password-submit" :disabled="changePasswordLoading">
+                    {{ changePasswordLoading ? '提交中...' : '确认修改' }}
+                  </button>
+                </div>
+              </form>
+            </section>
           </div>
         </section>
 
@@ -4972,6 +5722,14 @@ onBeforeUnmount(() => {
                   @click="selectMemberInfoTab('ledger')"
                 >
                   会员账本
+                </button>
+                <button
+                  type="button"
+                  class="member-info-tab"
+                  :class="{ 'is-active': memberInfoTab === 'rules' }"
+                  @click="selectMemberInfoTab('rules')"
+                >
+                  游戏规则
                 </button>
               </div>
 
@@ -5021,6 +5779,40 @@ onBeforeUnmount(() => {
               </div>
             </template>
 
+            <template v-else-if="memberInfoTab === 'rules'">
+              <section class="member-info-card">
+                <div class="member-info-card-title">{{ gameRules?.gameName || '游戏规则' }}</div>
+
+                <div class="rules-tabs">
+                  <button
+                    v-for="game in games"
+                    :key="game.id"
+                    type="button"
+                    class="rules-tab"
+                    :class="{ active: Number(selectedRulesGameId) === Number(game.id) }"
+                    @click="selectRulesGame(game.id)"
+                  >
+                    {{ game.gameName }}
+                  </button>
+                </div>
+
+                <p v-if="gameRulesError" class="console-message is-error">{{ gameRulesError }}</p>
+                <p v-else-if="gameRulesLoading && !currentRuleSections.length" class="console-message">游戏规则加载中...</p>
+
+                <template v-if="!gameRulesError">
+                  <div v-if="currentRuleSection" class="rules-content">
+                    <section class="rules-block">
+                      <div class="rules-html" v-html="currentRuleSection.content || ''"></div>
+                    </section>
+                  </div>
+
+                  <div v-else-if="!gameRulesLoading" class="rules-content">
+                    暂无游戏规则
+                  </div>
+                </template>
+              </section>
+            </template>
+
             <template v-else>
               <p v-if="memberBalanceLogsError" class="console-message is-error">{{ memberBalanceLogsError }}</p>
               <p
@@ -5055,6 +5847,17 @@ onBeforeUnmount(() => {
                 v-if="!memberBalanceLogsLoading && !memberBalanceLogsError"
                 class="bets-view-pagination bets-view-pagination-footer"
               >
+                <label class="page-size-field">
+                  <span>每页</span>
+                  <select
+                    :value="memberBalanceLogsPage.size"
+                    @change="changeMemberBalanceLogsPageSize($event.target.value)"
+                  >
+                    <option v-for="size in memberLedgerPageSizeOptions" :key="`ledger-size-${size}`" :value="size">
+                      {{ size }}条
+                    </option>
+                  </select>
+                </label>
                 <button
                   type="button"
                   :disabled="memberBalanceLogsPage.page <= 0"
