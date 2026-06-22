@@ -1911,19 +1911,19 @@ const formatBallIndexLabel = (ballIndex) => {
 
 const formatResultStatusLabel = (resultStatus) => {
   const normalizedStatus = String(resultStatus || '').trim().toUpperCase()
-  if (normalizedStatus === 'PENDING') {
-    return '未开奖'
+  const resultStatusLabelMap = {
+    PENDING: '未开奖',
+    WIN: '中奖',
+    DRAW: '平',
+    LOSE: '未中奖',
+    CANCELLED: '已取消',
+    CANCELED: '已取消',
+    REFUNDED: '已退单',
+    REFUND: '已退单',
+    ABNORMAL: '结算异常',
   }
-  if (normalizedStatus === 'WIN') {
-    return '中奖'
-  }
-  if (normalizedStatus === 'DRAW') {
-    return '平'
-  }
-  if (normalizedStatus === 'LOSE') {
-    return '未中奖'
-  }
-  return resultStatus || '--'
+
+  return resultStatusLabelMap[normalizedStatus] || resultStatus || '--'
 }
 
 const parseDrawCodeNumbers = (drawCode) => {
@@ -2781,14 +2781,9 @@ const loadDailySummaryBetDetails = async (gameId, tradeDate, page = 0, silent = 
   }
 
   const businessDayRange = getBusinessDayRangeByDate(tradeDate)
-  const query = new URLSearchParams({
-    page: String(page),
-    size: String(dailySummaryBetDetailsPage.value.size),
-    gameId: String(gameId),
-    startAt: businessDayRange.startAt,
-    endAt: businessDayRange.endAt,
-    status: '已结算',
-  })
+  const pageSize = dailySummaryBetDetailsPage.value.size
+  const fetchSize = (page + 1) * pageSize
+  const detailStatuses = ['已结算', '已退单']
 
   if (!silent) {
     dailySummaryBetDetailsLoading.value = true
@@ -2796,15 +2791,44 @@ const loadDailySummaryBetDetails = async (gameId, tradeDate, page = 0, silent = 
   }
 
   try {
-    const payload = await apiFetch(`/api/bets?${query.toString()}`)
-    const pageData = payload.data || payload
-    const list = pageData.records || pageData.content || pageData.list || pageData.items || []
-    dailySummaryBetDetails.value = Array.isArray(list) ? list : []
+    const payloads = await Promise.all(
+      detailStatuses.map((status) => {
+        const query = new URLSearchParams({
+          page: '0',
+          size: String(fetchSize),
+          gameId: String(gameId),
+          startAt: businessDayRange.startAt,
+          endAt: businessDayRange.endAt,
+          status,
+        })
+
+        return apiFetch(`/api/bets?${query.toString()}`)
+      }),
+    )
+
+    const pageDatas = payloads.map((payload) => payload.data || payload)
+    const mergedList = pageDatas.flatMap((pageData) => {
+      const list = pageData.records || pageData.content || pageData.list || pageData.items || []
+      return Array.isArray(list) ? list : []
+    })
+    const sortedList = [...mergedList].sort((left, right) => {
+      const leftTime = new Date(left?.createdAt || left?.updatedAt || 0).getTime()
+      const rightTime = new Date(right?.createdAt || right?.updatedAt || 0).getTime()
+      if (leftTime !== rightTime) {
+        return rightTime - leftTime
+      }
+
+      return Number(right?.id || 0) - Number(left?.id || 0)
+    })
+    const total = pageDatas.reduce((sum, pageData) => sum + (Number(pageData.total) || 0), 0)
+    const pageStart = page * pageSize
+
+    dailySummaryBetDetails.value = sortedList.slice(pageStart, pageStart + pageSize)
     dailySummaryBetDetailsPage.value = {
-      total: pageData.total || 0,
-      page: pageData.page || 0,
-      size: pageData.size || dailySummaryBetDetailsPage.value.size,
-      totalPages: pageData.totalPages || 0,
+      total,
+      page,
+      size: pageSize,
+      totalPages: Math.ceil(total / pageSize),
     }
   } catch (error) {
     if (!silent) {
